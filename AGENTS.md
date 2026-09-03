@@ -62,6 +62,22 @@ demo, test, or feature easier.
 - Preserve existing user changes; do not add unrelated infrastructure or
   dependencies.
 
+## Model provider
+
+Bedrock is the default agent model (plan.md §11). Selection is env-driven:
+
+- `MODEL_PROVIDER=bedrock` (default) — needs AWS credentials with
+  `bedrock:InvokeModel`/Converse access. This machine uses SSO profile `dev`
+  (account <account-id>, role <role>, region ap-south-1). Activate:
+  `aws sso login --profile dev`, then `export AWS_PROFILE=dev`.
+- `BEDROCK_MODEL_ID` — the inference-profile id to call. List what the account
+  has: `AWS_PROFILE=dev uv run python -m agent_backend.model_gateway.list_models`.
+- `MODEL_PROVIDER=local` — an OpenAI-compatible endpoint (`LOCAL_MODEL_URL`).
+- `MODEL_PROVIDER=fake` / `none` — offline deterministic; used by all tests.
+
+A missing/expired credential never crashes a run: the mapper degrades to
+abstention and asks the user (invariant: conservative under uncertainty).
+
 ## Commands
 
 - Python setup: `uv sync`

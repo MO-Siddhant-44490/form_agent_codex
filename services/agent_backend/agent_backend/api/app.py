@@ -11,6 +11,7 @@ from ..document_intelligence.fact_store import FactStore
 from ..document_intelligence.pdf_adapter import PyMuPdfParserAdapter
 from ..document_intelligence.pipeline import DocumentPipeline
 from ..document_intelligence.store import DocumentRejected, DocumentStore
+from ..mapper import DeterministicMapper, Mapper
 from ..persistence.repository import Repository, make_engine
 from .auth import AuthError, DevTokenAuth
 from .session_hub import ExtensionSession, ProtocolError
@@ -22,6 +23,10 @@ class AppState:
     auth: DevTokenAuth
     documents: DocumentStore
     facts: FactStore
+    # Mapper used when the backend drives an orchestration graph. Defaults to
+    # the deterministic mapper for zero-dependency tests; the server wires the
+    # env-selected mapper (Bedrock by default) via build_default_mapper().
+    mapper: Mapper = field(default_factory=DeterministicMapper)
     sessions: dict[str, ExtensionSession] = field(default_factory=dict)
 
 

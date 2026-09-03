@@ -11,12 +11,18 @@ from .config import BackendConfig
 
 def build_app():
     config = BackendConfig.from_env()
+    mapper = build_default_mapper()
+    print(
+        f"model provider: {type(mapper).__name__} "
+        f"({getattr(getattr(mapper, '_gateway', None), 'model_id', 'deterministic')})"
+    )
     return create_app(
         AppState(
             repo=Repository(make_engine(config.database_url)),
             auth=DevTokenAuth(),
             documents=DocumentStore(),
             facts=FactStore(),
+            mapper=mapper,
         )
     )
 

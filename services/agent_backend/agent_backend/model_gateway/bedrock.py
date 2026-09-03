@@ -12,6 +12,7 @@ from .json_chat import run_mapping_chat
 class BedrockConfig:
     model_id: str
     region: str = "us-east-1"
+    profile: str | None = None  # AWS named profile (e.g. an SSO profile)
     max_tokens: int = 1500
     temperature: float = 0.0
     read_timeout_s: int = 30
@@ -31,7 +32,8 @@ class BedrockModelAdapter:
             import boto3
             from botocore.config import Config
 
-            self._client = boto3.client(
+            session = boto3.Session(profile_name=self._config.profile)
+            self._client = session.client(
                 "bedrock-runtime",
                 region_name=self._config.region,
                 config=Config(
