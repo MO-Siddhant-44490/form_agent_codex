@@ -3,19 +3,20 @@ name = "form-agent-workspace"
 version = "0.1.0"
 description = "Workspace root for the agentic form-filling system (see plan.md)"
 requires-python = ">=3.12"
-dependencies = ["form-contracts"]
+dependencies = ["form-contracts", "agent-backend"]
 
 [tool.uv.workspace]
-members = ["packages/contracts/python"]
+members = ["packages/contracts/python", "services/agent_backend"]
 
 [tool.uv.sources]
 form-contracts = { workspace = true }
+agent-backend = { workspace = true }
 
 [dependency-groups]
 dev = ["pytest>=8.0", "ruff>=0.6"]
 
 [tool.pytest.ini_options]
-testpaths = ["packages/contracts/python/tests"]
+testpaths = ["packages/contracts/python/tests", "services/agent_backend/tests"]
 
 [tool.ruff]
 line-length = 100

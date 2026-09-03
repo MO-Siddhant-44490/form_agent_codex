@@ -1,0 +1,100 @@
+"""ExtensionPlaywrightTransport: drives the real MV3 extension's background
+test hooks through Playwright (the Slice 1 harness stand-in for the Slice 4
+WebSocket backend). The extension still enforces every guard itself — this
+transport is a command source, not a bypass."""
+
+import tempfile
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+from form_contracts import (
+    ActionResult,
+    BrowserAction,
+    PageObservation,
+    TabSession,
+    VerificationResult,
+)
+
+from ..transport import ExecuteOutcome
+
+
+class ExtensionPlaywrightTransport:
+    def __init__(self, extension_dist: Path, fixture_url: str) -> None:
+        self._extension_dist = extension_dist
+        self._fixture_url = fixture_url
+        self._pw: Any = None
+        self._context: Any = None
+        self._worker: Any = None
+
+    def attach(self) -> TabSession:
+        from playwright.sync_api import sync_playwright
+
+        self._pw = sync_playwright().start()
+        self._context = self._pw.chromium.launch_persistent_context(
+            tempfile.mkdtemp(prefix="fa-ext-py-"),
+            channel="chromium",
+            args=[
+                f"--disable-extensions-except={self._extension_dist}",
+                f"--load-extension={self._extension_dist}",
+            ],
+        )
+        workers = self._context.service_workers
+        self._worker = workers[0] if workers else self._context.wait_for_event("serviceworker")
+
+        page = self._context.new_page()
+        page.goto(self._fixture_url)
+
+        state = self._worker.evaluate(
+            """async (url) => {
+                const tabs = await chrome.tabs.query({});
+                const tab = tabs.find((t) => t.url === url);
+                if (!tab?.id || !tab.url) throw new Error(`no tab for ${url}`);
+                return globalThis.__formAgentTest.attachToTab(tab.id, tab.url);
+            }""",
+            self._fixture_url,
+        )
+        if not state.get("attached"):
+            raise RuntimeError(f"attach failed: {state.get('error')}")
+        return TabSession(
+            run_id=state["runId"],
+            tab_id=state["tabId"],
+            origin=state["origin"],
+            attached_at=datetime.now(UTC),
+        )
+
+    def observe(self) -> PageObservation:
+        state = self._worker.evaluate("() => globalThis.__formAgentTest.observe()")
+        if state.get("error"):
+            raise RuntimeError(f"observe failed: {state['error']}")
+        return PageObservation.model_validate(state["lastObservation"])
+
+    def execute(self, action: BrowserAction) -> ExecuteOutcome:
+        outcome = self._worker.evaluate(
+            "(a) => globalThis.__formAgentTest.execute(a)",
+            action.model_dump(mode="json"),
+        )
+        observation = None
+        state = outcome.get("state") or {}
+        if state.get("lastObservation"):
+            observation = PageObservation.model_validate(state["lastObservation"])
+        verification = None
+        if outcome.get("verification"):
+            verification = VerificationResult.model_validate(outcome["verification"])
+        return ExecuteOutcome(
+            result=ActionResult.model_validate(outcome["result"]),
+            verification=verification,
+            observation=observation,
+        )
+
+    def page_eval(self, expression: str) -> Any:
+        """Fixture ground-truth checks from tests; not part of the transport
+        contract."""
+        page = next(p for p in self._context.pages if p.url.startswith(self._fixture_url))
+        return page.evaluate(expression)
+
+    def close(self) -> None:
+        if self._context:
+            self._context.close()
+        if self._pw:
+            self._pw.stop()

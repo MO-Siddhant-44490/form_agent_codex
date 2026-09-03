@@ -1,0 +1,83 @@
+"""End-to-end Slice 1 acceptance: the Python driver fills the real fixture
+form through the real extension, one verified action at a time, and stops
+before submission.
+
+Requires a built extension (pnpm --filter @form-agent/extension build), the
+fixture server dependencies (none), and a Playwright chromium. Gated behind
+RUN_EXTENSION_INTEGRATION=1 to keep default test runs browser-free.
+"""
+
+import os
+import socket
+import subprocess
+import time
+from pathlib import Path
+
+import pytest
+from agent_backend.driver import run_fill
+from agent_backend.facts import slice1_facts
+from agent_backend.transports.extension_playwright import ExtensionPlaywrightTransport
+from form_contracts import RunOutcome, VerificationStatus
+
+REPO = Path(__file__).resolve().parents[3]
+EXTENSION_DIST = REPO / "apps" / "extension" / "dist"
+FIXTURE_PORT = 4174
+FIXTURE_URL = f"http://127.0.0.1:{FIXTURE_PORT}/basic-form/"
+
+pytestmark = pytest.mark.skipif(
+    os.environ.get("RUN_EXTENSION_INTEGRATION") != "1",
+    reason="set RUN_EXTENSION_INTEGRATION=1 to run browser integration",
+)
+
+
+@pytest.fixture(scope="module")
+def fixture_server():
+    process = subprocess.Popen(
+        ["node", str(REPO / "apps" / "fixtures" / "serve.mjs")],
+        env={**os.environ, "FIXTURE_PORT": str(FIXTURE_PORT)},
+    )
+    for _ in range(150):
+        try:
+            with socket.create_connection(("127.0.0.1", FIXTURE_PORT), timeout=0.2):
+                break
+        except OSError:
+            time.sleep(0.1)
+    else:
+        process.terminate()
+        pytest.fail("fixture server did not start")
+    yield
+    process.terminate()
+    process.wait(timeout=5)
+
+
+def test_python_driver_fills_real_form_via_extension(fixture_server):
+    assert EXTENSION_DIST.exists(), "build the extension first"
+    transport = ExtensionPlaywrightTransport(EXTENSION_DIST, FIXTURE_URL)
+    try:
+        result = run_fill(transport, slice1_facts())
+
+        assert result.outcome is RunOutcome.COMPLETED, result.detail
+        assert len(result.filled_fields) == 8
+        assert all(v.status is VerificationStatus.SUCCESS for v in result.verifications)
+
+        # Ground truth straight from the live DOM, independent of observations.
+        dom = transport.page_eval(
+            """() => {
+                const form = document.getElementById("application-form");
+                const data = Object.fromEntries(new FormData(form).entries());
+                data.subscribe = form.elements.subscribe.checked;
+                data.honeypot = form.elements.website.value;
+                data.submissions = window.__fixture.submissions.length;
+                return data;
+            }"""
+        )
+        assert dom["full_name"] == "Ada Lovelace"
+        assert dom["email"] == "ada@example.test"
+        assert dom["date_of_birth"] == "1998-04-17"
+        assert dom["country"] == "IN"
+        assert dom["contact_method"] == "email"
+        assert dom["subscribe"] is True
+        assert dom["honeypot"] == ""  # bot trap untouched
+        assert dom["submissions"] == 0  # invariant 1: stopped before submit
+    finally:
+        transport.close()
