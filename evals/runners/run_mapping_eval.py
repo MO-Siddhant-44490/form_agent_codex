@@ -12,6 +12,7 @@ clarification. Usage:
 
 import argparse
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -39,7 +40,13 @@ def build_adapter(name: str, model_id: str | None):
 
         if not model_id:
             raise SystemExit("--model-id is required for bedrock")
-        return BedrockModelAdapter(BedrockConfig(model_id=model_id))
+        return BedrockModelAdapter(
+            BedrockConfig(
+                model_id=model_id,
+                region=os.environ.get("AWS_REGION", "ap-south-1"),
+                profile=os.environ.get("AWS_PROFILE"),
+            )
+        )
     if name == "local":
         from agent_backend.model_gateway.local_openai import (
             LocalOpenAIConfig,

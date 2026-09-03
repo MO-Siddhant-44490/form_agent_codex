@@ -13,7 +13,7 @@ from .fake import FakeModelAdapter
 
 # APAC cross-region inference profile; override per account/region with
 # BEDROCK_MODEL_ID (list options: python -m agent_backend.model_gateway.list_models).
-DEFAULT_BEDROCK_MODEL_ID = "apac.anthropic.claude-sonnet-4-5-20250929-v1:0"
+DEFAULT_BEDROCK_MODEL_ID = "apac.anthropic.claude-sonnet-4-20250514-v1:0"
 
 
 def build_gateway_from_env() -> ModelGateway:

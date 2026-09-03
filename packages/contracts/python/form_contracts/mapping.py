@@ -10,9 +10,16 @@ from .common import StrictModel
 
 
 class FieldMapping(StrictModel):
-    """One proposed field->fact assignment. `selected_option_value` carries a
-    model-chosen option for enumerated controls; it must exist among the
-    field's observed options or policy discards the mapping."""
+    """One proposed field->fact assignment. Three valid shapes:
+    - mapped: `fact_key` set (optionally with `selected_option_value` for an
+      enumerated control; it must exist among the field's observed options or
+      policy discards the mapping);
+    - clarify: `fact_key` null and `needs_clarification` true (ambiguous, low
+      confidence, or missing fact);
+    - skip: `fact_key` null and `needs_clarification` false (deliberately not
+      filled — e.g. a credential field the model correctly refuses to map).
+    A skip yields no assignment and no question; the deterministic mapper and
+    policy gate remain the enforcement points regardless."""
 
     field_id: str
     fact_key: str | None = None
@@ -20,12 +27,6 @@ class FieldMapping(StrictModel):
     confidence: float = Field(ge=0.0, le=1.0)
     needs_clarification: bool = False
     reason: str | None = None
-
-    @model_validator(mode="after")
-    def _mapped_or_flagged(self) -> "FieldMapping":
-        if self.fact_key is None and not self.needs_clarification:
-            raise ValueError("an unmapped field must be flagged needs_clarification")
-        return self
 
 
 class FieldMappingBatch(StrictModel):
