@@ -48,6 +48,9 @@ class FakeField:
     options: list[str] | None = None
     # Simulated flakiness: the first N executes do not stick (value_mismatch).
     fail_executions: int = 0
+    # When set, the field reports this validation message after being filled,
+    # so verification returns VALIDATION_ERROR (recovery -> ask user).
+    validation_error: str | None = None
 
 
 def basic_form_fields() -> list[FakeField]:
@@ -166,6 +169,7 @@ class FakeTransport:
             checked=f.checked,
             current_value=f.value,
             options=f.options,
+            validation_message=f.validation_error if f.value is not None else None,
         )
 
     def observe(self) -> PageObservation:
@@ -358,11 +362,15 @@ class FakeTransport:
             page_fingerprint=observation.page_fingerprint,
         )
         ok = True
+        failure = FailureClass.VALUE_MISMATCH
         if expected is not None:
             if expected.field_value is not None and target.value != expected.field_value:
                 ok = False
             if expected.checked is not None and target.checked != expected.checked:
                 ok = False
+        if ok and target.validation_error is not None and target.value is not None:
+            ok = False
+            failure = FailureClass.VALIDATION_ERROR
         if ok:
             return VerificationResult(
                 action_id=action.action_id,
@@ -374,7 +382,7 @@ class FakeTransport:
             action_id=action.action_id,
             status=VerificationStatus.RETRYABLE_FAILURE,
             evidence=evidence,
-            failure_class=FailureClass.VALUE_MISMATCH,
+            failure_class=failure,
             recommended_transition=RecommendedTransition.RETRY,
         )
 

@@ -46,13 +46,21 @@ def test_flaky_field_is_retried_then_succeeds():
     assert len(failures) == 1
 
 
-def test_permanently_failing_field_exhausts_retry_budget():
+def test_permanently_failing_field_recovers_to_a_classified_block():
+    # A value that never sticks walks the value_mismatch ladder (retry ->
+    # reobserve -> stop); the field is then blocked and reported, and the run
+    # ends NEEDS_USER rather than looping (bounded recovery, plan.md §7.8).
     transport = FakeTransport()
     transport.fields[0].fail_executions = 99
-    result = run_fill(transport, slice1_facts(), DriverBudgets(max_retries_per_action=2))
+    result = run_fill(transport, slice1_facts())
 
-    assert result.outcome is RunOutcome.BUDGET_EXHAUSTED
-    assert "full-name" in (result.detail or "")
+    assert result.outcome is RunOutcome.NEEDS_USER
+    # The other fields were still filled.
+    assert len(result.filled_fields) == 7
+    # Recovery was attempted and terminated in STOP for the bad field.
+    strategies = [d.strategy.value for d in result.recovery_decisions if d.field_id == "full-name"]
+    assert strategies == ["retry", "reobserve", "stop"]
+    assert any(q.field_id == "full-name" for q in result.questions)
 
 
 def test_step_budget_forces_classified_termination():

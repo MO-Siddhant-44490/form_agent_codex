@@ -62,6 +62,7 @@ from .session import (
 from .verification import (
     FailureClass,
     RecommendedTransition,
+    RecoveryStrategy,
     VerificationEvidence,
     VerificationResult,
     VerificationStatus,
@@ -131,6 +132,7 @@ __all__ = [  # noqa: RUF022 - grouped by module
     "VerificationStatus",
     "FailureClass",
     "RecommendedTransition",
+    "RecoveryStrategy",
     "VerificationEvidence",
     "VerificationResult",
     "TabSession",

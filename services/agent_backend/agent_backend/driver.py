@@ -17,6 +17,7 @@ from form_contracts import (
     PolicyDecision,
     PolicyDecisionKind,
     QuestionKind,
+    RecoveryStrategy,
     RejectionReason,
     RiskLevel,
     RunOutcome,
@@ -29,6 +30,7 @@ from form_contracts import (
 from .mapper import DeterministicMapper, Mapper, MappingOutcome
 from .planner import assignment_satisfied, build_action_for
 from .policy import check_action
+from .recovery import RecoveryDecision, RecoveryPlanner
 from .transport import BrowserTransport
 
 
@@ -50,6 +52,7 @@ class DriveResult:
     unmapped_required: list[str] = field(default_factory=list)
     questions: list[UserQuestion] = field(default_factory=list)
     policy_decisions: list[PolicyDecision] = field(default_factory=list)
+    recovery_decisions: list[RecoveryDecision] = field(default_factory=list)
     model_calls: list[ModelCallMetadata] = field(default_factory=list)
     detail: str | None = None
 
@@ -86,6 +89,25 @@ def _navigation_action(
     )
 
 
+def _helper_action(
+    observation: PageObservation,
+    session: TabSession,
+    kind: ActionKind,
+    sequence_number: int,
+) -> BrowserAction:
+    """A non-mutating helper action (SCROLL / WAIT_FOR_STABLE_PAGE) used by
+    recovery. These carry no target and no expected effect."""
+    return BrowserAction(
+        action_id=f"{session.run_id}:{kind.value.lower()}-{sequence_number}",
+        run_id=session.run_id,
+        tab_id=session.tab_id,
+        origin=session.origin,
+        sequence_number=sequence_number,
+        kind=kind,
+        source_observation_seq=observation.observation_seq,
+    )
+
+
 def run_fill(
     transport: BrowserTransport,
     facts: list[DocumentFact],
@@ -105,6 +127,7 @@ def run_fill(
     retries: dict[str, int] = {}
     blocked_fields: set[str] = set()
     visited_pages: set[str] = set()
+    recovery = RecoveryPlanner()
     mapping: MappingOutcome | None = None
     mapped_fingerprint: str | None = None
 
@@ -224,18 +247,51 @@ def run_fill(
         if verification.status is VerificationStatus.SUCCESS:
             result.filled_fields.append(field_id)
             retries.pop(field_id, None)
+            recovery.clear(field_id)
             continue
         if verification.status in (
             VerificationStatus.RETRYABLE_FAILURE,
             VerificationStatus.NEEDS_REPERCEPTION,
         ):
+            # Bounded recovery: pick the next strategy from the failure ladder.
+            decision = recovery.plan(field_id, verification.failure_class)
+            result.recovery_decisions.append(decision)
+            # A re-attempt must carry a fresh idempotency key.
             retries[field_id] = retries.get(field_id, 0) + 1
-            if retries[field_id] > budgets.max_retries_per_action:
-                result.outcome = RunOutcome.BUDGET_EXHAUSTED
-                result.detail = (
-                    f"retry budget exhausted on {field_id} ({verification.failure_class})"
+
+            if decision.strategy in (RecoveryStrategy.STOP, RecoveryStrategy.ASK_USER):
+                blocked_fields.add(field_id)
+                kind = (
+                    QuestionKind.LOW_CONFIDENCE
+                    if decision.strategy is RecoveryStrategy.ASK_USER
+                    else QuestionKind.AMBIGUOUS_MAPPING
                 )
-                return result
+                result.questions.append(
+                    UserQuestion(
+                        question_id=f"q-recover-{field_id}",
+                        kind=kind,
+                        prompt=(
+                            f"Could not fill {field_id} "
+                            f"({verification.failure_class}); needs your input."
+                        ),
+                        field_id=field_id,
+                    )
+                )
+                observation = transport.observe()
+                continue
+            if decision.strategy is RecoveryStrategy.SCROLL:
+                sequence += 1
+                transport.execute(_helper_action(observation, session, ActionKind.SCROLL, sequence))
+                result.steps_used += 1
+            elif decision.strategy is RecoveryStrategy.WAIT_STABLE:
+                sequence += 1
+                transport.execute(
+                    _helper_action(observation, session, ActionKind.WAIT_FOR_STABLE_PAGE, sequence)
+                )
+                result.steps_used += 1
+            # RETRY / REOBSERVE (and after SCROLL/WAIT): fresh observation, the
+            # loop re-selects the still-unsatisfied field and rebuilds the
+            # action with the bumped attempt.
             observation = transport.observe()
             continue
         if verification.status is VerificationStatus.NEEDS_USER:

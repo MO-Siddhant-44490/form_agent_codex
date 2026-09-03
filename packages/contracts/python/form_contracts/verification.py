@@ -71,3 +71,16 @@ class VerificationResult(StrictModel):
         if self.status in _FAILURE_CLASS_REQUIRED and self.failure_class is None:
             raise ValueError(f"{self.status} requires a failure_class")
         return self
+
+
+class RecoveryStrategy(StrEnum):
+    """Bounded recovery moves the recovery agent may select (plan.md §7.8).
+    A ladder of these is walked per field; the same strategy is never repeated
+    for the same failure, and the ladder terminates in STOP."""
+
+    RETRY = "retry"  # re-attempt the same action with a fresh idempotency key
+    REOBSERVE = "reobserve"  # take a fresh observation and re-map
+    SCROLL = "scroll"  # scroll the target into view, then re-attempt
+    WAIT_STABLE = "wait_stable"  # wait for the DOM to settle, then re-attempt
+    ASK_USER = "ask_user"  # the value/field needs a human (e.g. bad validation)
+    STOP = "stop"  # give up on this field; report it, do not loop

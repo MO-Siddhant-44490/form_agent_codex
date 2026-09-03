@@ -252,7 +252,8 @@ def test_combobox_fill_via_extension(fixture_server):
 
     facts = [
         f.model_copy(update={"value": "IN", "sensitivity": Sensitivity.PUBLIC})
-        if f.key == "country" else f
+        if f.key == "country"
+        else f
         for f in slice1_facts()
         if f.key in {"full_name", "country"}
     ]
