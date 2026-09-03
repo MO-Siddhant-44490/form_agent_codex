@@ -242,3 +242,33 @@ def test_multipage_fill_via_extension(fixture_server):
         }
     finally:
         transport.close()
+
+
+def test_combobox_fill_via_extension(fixture_server):
+    """Slice 5 custom widget: a searchable ARIA combobox filled in a real
+    browser — the executor opens the popup and clicks the matching option."""
+    from agent_backend.driver import run_fill
+    from form_contracts import Sensitivity
+
+    facts = [
+        f.model_copy(update={"value": "IN", "sensitivity": Sensitivity.PUBLIC})
+        if f.key == "country" else f
+        for f in slice1_facts()
+        if f.key in {"full_name", "country"}
+    ]
+    assert EXTENSION_DIST.exists(), "build the extension first"
+    transport = ExtensionPlaywrightTransport(
+        EXTENSION_DIST, f"http://127.0.0.1:{FIXTURE_PORT}/combobox-form/"
+    )
+    try:
+        result = run_fill(transport, facts)
+        assert result.outcome is RunOutcome.COMPLETED, result.detail
+        assert len(result.filled_fields) == 2
+
+        values = transport.page_eval(
+            "() => Object.fromEntries(new FormData(document.getElementById('application-form')).entries())"
+        )
+        assert values["full_name"] == "Ada Lovelace"
+        assert values["country"] == "IN"  # the hidden input the combobox sets
+    finally:
+        transport.close()

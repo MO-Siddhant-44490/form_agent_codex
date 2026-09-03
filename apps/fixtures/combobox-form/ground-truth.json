@@ -1,0 +1,3 @@
+{ "fixture_id": "combobox-form", "url_path": "/combobox-form/",
+  "description": "ARIA combobox (searchable dropdown) with options in a listbox; selection sets a hidden input.",
+  "expected_fill": { "full_name": "Ada Lovelace", "country": "IN" } }

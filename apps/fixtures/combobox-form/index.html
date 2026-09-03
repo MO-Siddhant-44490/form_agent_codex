@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Combobox Form — Fixture</title>
+<style>body{font-family:system-ui;max-width:560px;margin:2rem auto;padding:0 1rem}
+label{display:block;margin-top:1rem;font-weight:600}
+.combobox{position:relative}.combobox input[role=combobox]{padding:.4rem;width:320px}
+ul[role=listbox]{list-style:none;margin:.25rem 0;padding:.25rem;border:1px solid #ccc;width:320px}
+ul[hidden]{display:none}li[role=option]{padding:.3rem;cursor:pointer}li[role=option]:hover{background:#eef}</style>
+</head>
+<body>
+<h1>Application</h1>
+<form id="application-form">
+  <label for="name">Full name</label>
+  <input id="name" name="full_name" type="text" required style="display:block;padding:.4rem;width:320px">
+
+  <label for="country">Country of residence</label>
+  <div class="combobox" data-combobox>
+    <input id="country" role="combobox" aria-expanded="false" aria-controls="country-list"
+           aria-autocomplete="list" data-value-input="country" placeholder="Search country">
+    <input type="hidden" name="country" value="">
+    <ul id="country-list" role="listbox" hidden>
+      <li role="option" data-value="DE">Germany</li>
+      <li role="option" data-value="IN">India</li>
+      <li role="option" data-value="US">United States</li>
+    </ul>
+  </div>
+</form>
+<script>
+  const combo = document.getElementById("country");
+  const list = document.getElementById("country-list");
+  const hidden = document.querySelector('input[name="country"]');
+  function open(){ list.hidden = false; combo.setAttribute("aria-expanded","true"); }
+  function close(){ list.hidden = true; combo.setAttribute("aria-expanded","false"); }
+  combo.addEventListener("focus", open);
+  combo.addEventListener("click", open);
+  combo.addEventListener("input", () => { // filter
+    const q = combo.value.toLowerCase();
+    for (const li of list.querySelectorAll("[role=option]"))
+      li.style.display = li.textContent.toLowerCase().includes(q) ? "" : "none";
+    open();
+  });
+  list.addEventListener("click", (e) => {
+    const li = e.target.closest("[role=option]"); if(!li) return;
+    hidden.value = li.dataset.value; combo.value = li.textContent;
+    combo.dispatchEvent(new Event("change", {bubbles:true}));
+    close();
+  });
+  window.__fixture = { id:"combobox-form", submissions:[] };
+</script>
+</body></html>

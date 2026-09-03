@@ -2,7 +2,9 @@
 // action to the live DOM. No model output executes directly (invariant 5);
 // every mutation goes through framework-compatible native events.
 import type { ActionResult, BrowserAction } from "@form-agent/contracts";
-import { isFormControl, isInputEl, isSelectEl } from "./dom-types";
+import { detectComboboxes } from "../perception/widgets";
+import { deepQueryAll } from "../perception/shadow";
+import { elWindow, isFormControl, isInputEl, isSelectEl } from "./dom-types";
 import { fireInputEvents, focusThen, setNativeValue } from "./events";
 import { resolveTarget, type Resolved } from "./resolve";
 
@@ -59,6 +61,13 @@ export function executeAction(doc: Document, action: BrowserAction): ActionResul
 
 function executeTargeted(doc: Document, action: BrowserAction): ActionResult {
   if (!action.target) return failed(action, "action has no target");
+
+  // Custom ARIA combobox: open the popup and click the matching option,
+  // rather than treating it as a native <select>.
+  if (action.kind === "SELECT_OPTION" && action.target.role === "combobox") {
+    return executeCombobox(doc, action);
+  }
+
   const resolved = resolveTarget(doc, action.target);
   if (resolved.kind === "not-found") return failed(action, resolved.detail);
 
@@ -112,5 +121,34 @@ function executeTargeted(doc: Document, action: BrowserAction): ActionResult {
   // CLICK / DISMISS_DIALOG / SUBMIT: a real click on the resolved element.
   if (resolved.kind !== "element") return failed(action, "click needs a single element");
   (resolved.element as HTMLElement).click();
+  return result(action, "EXECUTED");
+}
+
+function executeCombobox(doc: Document, action: BrowserAction): ActionResult {
+  const value = action.resolved_value;
+  if (value === null || value === undefined) return failed(action, "no resolved value");
+  const combos = detectComboboxes(doc);
+  const combo = combos.find((c) => c.element.id === action.target!.field_id) ?? combos[0];
+  if (!combo) return failed(action, "combobox not found");
+
+  const el = combo.element;
+  const win = elWindow(el);
+  // Open the popup (focus + click) so the listbox renders.
+  el.dispatchEvent(new win.FocusEvent("focus", { bubbles: false }));
+  if (typeof el.focus === "function") el.focus();
+  el.click();
+  el.setAttribute("aria-expanded", "true");
+
+  // Re-scan options now that the popup is open, then click the match.
+  const fresh = detectComboboxes(doc).find((c) => c.element === el) ?? combo;
+  const listbox = fresh.listbox;
+  if (!listbox) return failed(action, "combobox has no listbox");
+  const options = deepQueryAll<HTMLElement>(listbox, '[role="option"]');
+  const match = options.find(
+    (o) =>
+      (o.getAttribute("data-value") ?? o.getAttribute("value") ?? o.textContent?.trim()) === value,
+  );
+  if (!match) return failed(action, `no combobox option for ${value}`);
+  match.click();
   return result(action, "EXECUTED");
 }

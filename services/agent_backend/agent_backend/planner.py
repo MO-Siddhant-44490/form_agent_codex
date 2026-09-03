@@ -21,6 +21,7 @@ KIND_FOR_INPUT_TYPE: dict[str, ActionKind] = {
     "date": ActionKind.SET_DATE,
     "number": ActionKind.SET_NUMBER,
     "select-one": ActionKind.SELECT_OPTION,
+    "combobox": ActionKind.SELECT_OPTION,
     "radio": ActionKind.SET_RADIO,
     "checkbox": ActionKind.SET_CHECKBOX,
 }

@@ -4,6 +4,7 @@
 import type { FormField, TargetDescriptor } from "@form-agent/contracts";
 import { accessibleName, computedRole, explicitLabel, groupLegend } from "./labels";
 import { deepQueryAll } from "./shadow";
+import { detectComboboxes } from "./widgets";
 import { hasLayout, isVisible } from "./visibility";
 
 type Control = HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
@@ -149,5 +150,56 @@ export function discoverFields(doc: Document): FormField[] {
     fields.push(baseField(el, fieldIdFor(el, index)));
   });
 
+  mergeComboboxes(doc, fields);
   return fields;
+}
+
+// Enrich discovered fields (or add new ones) for ARIA comboboxes so the
+// planner sees them as option-bearing controls.
+function mergeComboboxes(doc: Document, fields: FormField[]): void {
+  for (const combo of detectComboboxes(doc)) {
+    const el = combo.element;
+    const options = combo.options.map((o) => o.value);
+    const id = el.id || `combobox-${fields.length}`;
+    const existing = el.id ? fields.find((f) => f.field_id === el.id) : undefined;
+    if (existing) {
+      existing.input_type = "combobox";
+      existing.options = options;
+      existing.current_value = combo.currentValue;
+      existing.target = {
+        ...existing.target,
+        role: "combobox",
+        input_type: "combobox",
+        name_attr: el.getAttribute("data-value-input") ?? existing.target.name_attr,
+      };
+    } else {
+      fields.push({
+        field_id: id,
+        target: {
+          field_id: id,
+          role: "combobox",
+          accessible_name: accessibleName(el),
+          input_type: "combobox",
+          label: explicitLabel(el),
+          name_attr: el.getAttribute("data-value-input"),
+          autocomplete: null,
+          placeholder: el.getAttribute("placeholder"),
+          bounding_box: boundingBox(el),
+        },
+        input_type: "combobox",
+        label: explicitLabel(el),
+        accessible_name: accessibleName(el),
+        required: el.getAttribute("aria-required") === "true",
+        disabled: el.getAttribute("aria-disabled") === "true",
+        readonly: false,
+        visible: true,
+        checked: null,
+        current_value: combo.currentValue,
+        value_redacted: false,
+        options,
+        validation_message: null,
+        nearby_text: groupLegend(el),
+      });
+    }
+  }
 }
