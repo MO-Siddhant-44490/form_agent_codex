@@ -2,6 +2,8 @@
 // excluded from observations entirely — they are never actionable and hidden
 // honeypots must never be filled (threat T2).
 
+import { composedParent } from "./shadow";
+
 const OFFSCREEN_PX = -999;
 
 function offscreenByStyle(style: CSSStyleDeclaration): boolean {
@@ -28,11 +30,12 @@ export function isVisible(el: HTMLElement): boolean {
   if (!win) return false;
   const layout = hasLayout(el.ownerDocument);
 
-  // Walk self + ancestors for style-based hiding and offscreen honeypots.
+  // Walk self + composed ancestors (crossing shadow/iframe boundaries) for
+  // style-based hiding and offscreen honeypots.
   for (
     let node: HTMLElement | null = el;
-    node && node !== el.ownerDocument.body;
-    node = node.parentElement
+    node && node !== el.ownerDocument.body && node.ownerDocument.body?.contains(node) !== false;
+    node = composedParent(node)
   ) {
     const style = win.getComputedStyle(node);
     if (style.display === "none" || style.visibility === "hidden") return false;

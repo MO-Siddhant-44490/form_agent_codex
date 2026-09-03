@@ -1,0 +1,3 @@
+{ "fixture_id": "iframe-form", "url_path": "/iframe-form/",
+  "description": "Form inside a same-origin iframe.",
+  "expected_fill": { "full_name": "Ada Lovelace", "email": "ada@example.test" } }

@@ -3,6 +3,7 @@
 // credential-like inputs (invariant 2).
 import type { FormField, TargetDescriptor } from "@form-agent/contracts";
 import { accessibleName, computedRole, explicitLabel, groupLegend } from "./labels";
+import { deepQueryAll } from "./shadow";
 import { hasLayout, isVisible } from "./visibility";
 
 type Control = HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
@@ -123,9 +124,7 @@ const NON_FIELD_INPUT_TYPES = new Set(["submit", "button", "reset", "image"]);
  * (including honeypots) are excluded entirely. Radio inputs sharing a name
  * collapse into one radiogroup field. */
 export function discoverFields(doc: Document): FormField[] {
-  const controls = Array.from(
-    doc.querySelectorAll<Control>("input, select, textarea"),
-  );
+  const controls = deepQueryAll<Control>(doc, "input, select, textarea");
   const fields: FormField[] = [];
   const seenRadioGroups = new Set<string>();
 

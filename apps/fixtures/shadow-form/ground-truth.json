@@ -1,0 +1,3 @@
+{ "fixture_id": "shadow-form", "url_path": "/shadow-form/",
+  "description": "Form fields inside an open shadow root.",
+  "expected_fill": { "full_name": "Ada Lovelace", "email": "ada@example.test" } }

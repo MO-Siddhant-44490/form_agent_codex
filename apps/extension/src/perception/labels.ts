@@ -14,9 +14,11 @@ function escapeAttr(value: string): string {
 }
 
 export function explicitLabel(el: HTMLElement): string | null {
-  const doc = el.ownerDocument;
+  // Search the element's root (a shadow root, or the document) so a label
+  // inside an open shadow root resolves correctly.
+  const root = el.getRootNode() as Document | ShadowRoot;
   if (el.id) {
-    const label = doc.querySelector(`label[for="${escapeAttr(el.id)}"]`);
+    const label = root.querySelector(`label[for="${escapeAttr(el.id)}"]`);
     const text = textOf(label);
     if (text) return text;
   }
@@ -29,10 +31,12 @@ export function accessibleName(el: HTMLElement): string | null {
 
   const labelledBy = el.getAttribute("aria-labelledby");
   if (labelledBy) {
-    const doc = el.ownerDocument;
+    const root = el.getRootNode() as Document | ShadowRoot;
+    const byId = (id: string): Element | null =>
+      root instanceof Document ? root.getElementById(id) : root.querySelector(`[id="${id}"]`);
     const parts = labelledBy
       .split(/\s+/)
-      .map((id) => textOf(doc.getElementById(id)))
+      .map((id) => textOf(byId(id)))
       .filter((t): t is string => t !== null);
     if (parts.length > 0) return parts.join(" ");
   }

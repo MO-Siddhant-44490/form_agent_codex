@@ -2,6 +2,7 @@
 // action to the live DOM. No model output executes directly (invariant 5);
 // every mutation goes through framework-compatible native events.
 import type { ActionResult, BrowserAction } from "@form-agent/contracts";
+import { isFormControl, isInputEl, isSelectEl } from "./dom-types";
 import { fireInputEvents, focusThen, setNativeValue } from "./events";
 import { resolveTarget, type Resolved } from "./resolve";
 
@@ -66,18 +67,14 @@ function executeTargeted(doc: Document, action: BrowserAction): ActionResult {
   if (TEXTUAL_KINDS.has(action.kind)) {
     if (resolved.kind !== "element") return failed(action, "textual action on radio group");
     const el = resolved.element;
-    if (
-      !(el instanceof HTMLInputElement) &&
-      !(el instanceof HTMLSelectElement) &&
-      !(el instanceof HTMLTextAreaElement)
-    ) {
+    if (!isFormControl(el)) {
       return failed(action, "target is not a form control");
     }
     if (value === null || value === undefined) return failed(action, "no resolved value");
     if (el.disabled || (("readOnly" in el) && el.readOnly)) {
       return failed(action, "target is disabled or read-only");
     }
-    if (el instanceof HTMLSelectElement && !Array.from(el.options).some((o) => o.value === value)) {
+    if (isSelectEl(el) && !Array.from(el.options).some((o) => o.value === value)) {
       return failed(action, `option ${value} not present`);
     }
     focusThen(el, () => {
@@ -88,7 +85,7 @@ function executeTargeted(doc: Document, action: BrowserAction): ActionResult {
   }
 
   if (action.kind === "SET_CHECKBOX") {
-    if (resolved.kind !== "element" || !(resolved.element instanceof HTMLInputElement)) {
+    if (resolved.kind !== "element" || !isInputEl(resolved.element)) {
       return failed(action, "target is not a checkbox");
     }
     const el = resolved.element;
@@ -103,7 +100,7 @@ function executeTargeted(doc: Document, action: BrowserAction): ActionResult {
     const radios =
       resolved.kind === "radio-group"
         ? resolved.radios
-        : resolved.element instanceof HTMLInputElement
+        : isInputEl(resolved.element)
           ? [resolved.element]
           : [];
     const match = radios.find((r) => r.value === value);

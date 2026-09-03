@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Iframe Form — Fixture</title></head>
+<body>
+<h1>Application (embedded)</h1>
+<!-- The form lives in a same-origin iframe; the agent must reach into it. -->
+<iframe id="form-frame" src="inner.html" width="400" height="300"></iframe>
+<script>window.__fixture = { id: "iframe-form", submissions: [],
+  get innerValues(){ const d=document.getElementById("form-frame").contentDocument;
+    return Object.fromEntries(new FormData(d.getElementById("application-form")).entries()); } };
+</script>
+</body></html>

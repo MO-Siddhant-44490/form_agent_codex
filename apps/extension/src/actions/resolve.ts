@@ -3,6 +3,7 @@
 // is never accepted (invariant 5) — only TargetDescriptor fields are used.
 import type { TargetDescriptor } from "@form-agent/contracts";
 import { accessibleName } from "../perception/labels";
+import { deepGetById, deepQueryAll } from "../perception/shadow";
 import { isVisible } from "../perception/visibility";
 
 type Control = HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
@@ -18,31 +19,30 @@ export function resolveTarget(doc: Document, target: TargetDescriptor): Resolved
   // Radio groups are addressed by group, selected by value at execution time.
   if (target.field_id.startsWith(RADIO_GROUP_PREFIX)) {
     const name = target.field_id.slice(RADIO_GROUP_PREFIX.length);
-    const radios = Array.from(
-      doc.querySelectorAll<HTMLInputElement>(`input[type="radio"]`),
-    ).filter((r) => r.name === name && isVisible(r));
+    const radios = deepQueryAll<HTMLInputElement>(doc, 'input[type="radio"]').filter(
+      (r) => r.name === name && isVisible(r),
+    );
     return radios.length > 0
       ? { kind: "radio-group", radios }
       : { kind: "not-found", detail: `no visible radios named ${name}` };
   }
 
-  // 1. DOM id (stable ids captured at observation time).
-  const byId = doc.getElementById(target.field_id);
+  // 1. DOM id (stable ids captured at observation time), searched across
+  // open shadow roots and same-origin iframes.
+  const byId = deepGetById(doc, target.field_id);
   if (byId && isVisible(byId)) return { kind: "element", element: byId as Control };
 
   // 2. name attribute + input type.
   if (target.name_attr) {
-    const candidates = Array.from(
-      doc.querySelectorAll<Control>("input, select, textarea"),
-    ).filter((el) => el.name === target.name_attr && isVisible(el));
+    const candidates = deepQueryAll<Control>(doc, "input, select, textarea").filter(
+      (el) => el.name === target.name_attr && isVisible(el),
+    );
     if (candidates.length === 1) return { kind: "element", element: candidates[0]! };
   }
 
   // 3. accessible name among visible controls of a compatible input type.
   if (target.accessible_name) {
-    const candidates = Array.from(
-      doc.querySelectorAll<Control>("input, select, textarea"),
-    ).filter(
+    const candidates = deepQueryAll<Control>(doc, "input, select, textarea").filter(
       (el) =>
         isVisible(el) &&
         accessibleName(el) === target.accessible_name &&
@@ -58,10 +58,9 @@ export function resolveTarget(doc: Document, target: TargetDescriptor): Resolved
   // NAVIGATE_NEXT, DISMISS_DIALOG. Navigation controls often have no stable
   // id, so match by accessible name / visible text.
   if (target.role === "button" || target.input_type === "submit" || target.accessible_name) {
-    const clickable = Array.from(
-      doc.querySelectorAll<HTMLElement>(
-        'button, input[type="submit"], input[type="button"], [role="button"], a[href]',
-      ),
+    const clickable = deepQueryAll<HTMLElement>(
+      doc,
+      'button, input[type="submit"], input[type="button"], [role="button"], a[href]',
     ).filter((el) => {
       if (!isVisible(el)) return false;
       const name =
