@@ -17,6 +17,10 @@ dev = ["pytest>=8.0", "ruff>=0.6"]
 
 [tool.pytest.ini_options]
 testpaths = ["packages/contracts/python/tests", "services/agent_backend/tests"]
+filterwarnings = [
+  # PyMuPDF's SWIG bindings on Python 3.12; harmless and not ours to fix.
+  "ignore:builtin type .* has no __module__ attribute:DeprecationWarning",
+]
 
 [tool.ruff]
 line-length = 100

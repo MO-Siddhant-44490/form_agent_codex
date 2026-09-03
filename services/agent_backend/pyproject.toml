@@ -3,7 +3,17 @@ name = "agent-backend"
 version = "0.1.0"
 description = "Orchestration driver for the form-filling agent (Slice 1: plain loop, no LangGraph)"
 requires-python = ">=3.12"
-dependencies = ["form-contracts", "pydantic>=2.7", "playwright>=1.40"]
+dependencies = [
+    "form-contracts",
+    "pydantic>=2.7",
+    "playwright>=1.40",
+    "pymupdf>=1.28.2",
+]
+
+[project.optional-dependencies]
+docling = [
+    "docling>=2.0",
+]
 
 [build-system]
 requires = ["hatchling"]
