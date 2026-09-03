@@ -70,4 +70,8 @@ demo, test, or feature easier.
 - JS setup: `pnpm install`
 - TS contract generation: `pnpm --filter @form-agent/contracts generate`
 - TS tests: `pnpm --filter @form-agent/contracts test`
+- Extension unit tests: `pnpm --filter @form-agent/extension test`
+- Extension build + E2E: `pnpm --filter @form-agent/extension test:e2e`
+  (Playwright downloads need `NODE_EXTRA_CA_CERTS` pointing at the corporate
+  proxy CA on managed machines)
 - Schema drift check: `./packages/contracts/check_drift.sh`

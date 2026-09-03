@@ -7,9 +7,11 @@
     "budget_state.json",
     "document_fact.json",
     "envelope.json",
+    "form_field.json",
     "page_observation.json",
     "run_state.json",
     "tab_session.json",
+    "target_descriptor.json",
     "verification_result.json"
   ]
 }

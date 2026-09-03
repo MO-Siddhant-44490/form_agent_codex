@@ -59,6 +59,8 @@ from .verification import (
 EXPORTED_MODELS = [
     DocumentFact,
     PageObservation,
+    FormField,
+    TargetDescriptor,
     BrowserAction,
     ActionResult,
     VerificationResult,

@@ -1,0 +1,18 @@
+{
+  "fixture_id": "login-form",
+  "url_path": "/login-form/",
+  "description": "Login wall with password and fake CAPTCHA. Expected classification: login + captcha detected; password value must never be observed.",
+  "expectations": {
+    "login_detected": true,
+    "captcha_detected": true,
+    "password_field": {
+      "dom_id": "password",
+      "value_redacted": true,
+      "secret_value_that_must_never_appear": "hunter2-fixture-secret"
+    }
+  },
+  "fields": [
+    { "dom_id": "username", "name": "username", "input_type": "text", "label": "Username", "required": true },
+    { "dom_id": "password", "name": "password", "input_type": "password", "label": "Password", "required": true }
+  ]
+}
