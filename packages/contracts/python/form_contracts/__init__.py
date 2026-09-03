@@ -23,6 +23,16 @@ from .common import (
 )
 from .envelope import PAYLOAD_MODELS, Envelope, MessageType
 from .facts import DocumentFact, FactSource, FactStatus, FactValueType
+from .mapping import (
+    FieldMapping,
+    FieldMappingBatch,
+    ModelCallMetadata,
+    PolicyDecision,
+    PolicyDecisionKind,
+    PolicyRule,
+    QuestionKind,
+    UserQuestion,
+)
 from .observation import (
     CREDENTIAL_INPUT_TYPES,
     DialogInfo,
@@ -58,6 +68,11 @@ from .verification import (
 # Models exported to JSON Schema (and from there to TypeScript/Zod).
 EXPORTED_MODELS = [
     DocumentFact,
+    FieldMapping,
+    FieldMappingBatch,
+    UserQuestion,
+    PolicyDecision,
+    ModelCallMetadata,
     PageObservation,
     FormField,
     TargetDescriptor,
@@ -81,6 +96,14 @@ __all__ = [  # noqa: RUF022 - grouped by module
     "RunOutcome",
     "HumanTakeoverReason",
     "DocumentFact",
+    "FieldMapping",
+    "FieldMappingBatch",
+    "ModelCallMetadata",
+    "PolicyDecision",
+    "PolicyDecisionKind",
+    "PolicyRule",
+    "QuestionKind",
+    "UserQuestion",
     "FactSource",
     "FactStatus",
     "FactValueType",

@@ -7,11 +7,16 @@
     "budget_state.json",
     "document_fact.json",
     "envelope.json",
+    "field_mapping.json",
+    "field_mapping_batch.json",
     "form_field.json",
+    "model_call_metadata.json",
     "page_observation.json",
+    "policy_decision.json",
     "run_state.json",
     "tab_session.json",
     "target_descriptor.json",
+    "user_question.json",
     "verification_result.json"
   ]
 }

@@ -1,18 +1,26 @@
-"""Slice 1 driver: the deterministic perceive -> plan -> act -> verify loop
-with hard budgets and classified terminal outcomes (plan.md §6). No LangGraph
-yet — this loop is what Slice 4 lifts into a durable graph."""
+"""Slice 3 driver: perceive -> map (deterministic first, model-assisted) ->
+policy gate -> act -> verify, with hard budgets and classified outcomes
+(plan.md §6). Every action passes the deterministic policy gate regardless
+of what proposed it; blocked fields are reported, never silently skipped."""
 
 from dataclasses import dataclass, field
 
 from form_contracts import (
     DocumentFact,
+    ModelCallMetadata,
+    PolicyDecision,
+    PolicyDecisionKind,
+    QuestionKind,
     RejectionReason,
     RunOutcome,
+    UserQuestion,
     VerificationResult,
     VerificationStatus,
 )
 
-from .planner import plan_next_action, unmapped_required_fields
+from .mapper import DeterministicMapper, Mapper, MappingOutcome
+from .planner import assignment_satisfied, build_action_for
+from .policy import check_action
 from .transport import BrowserTransport
 
 
@@ -31,10 +39,12 @@ class DriveResult:
     filled_fields: list[str] = field(default_factory=list)
     verifications: list[VerificationResult] = field(default_factory=list)
     unmapped_required: list[str] = field(default_factory=list)
+    questions: list[UserQuestion] = field(default_factory=list)
+    policy_decisions: list[PolicyDecision] = field(default_factory=list)
+    model_calls: list[ModelCallMetadata] = field(default_factory=list)
     detail: str | None = None
 
 
-# Rejections that a fresh observation can cure; anything else is terminal.
 _REOBSERVE_REJECTIONS = {RejectionReason.STALE_OBSERVATION, RejectionReason.STALE_SEQUENCE}
 
 
@@ -42,18 +52,22 @@ def run_fill(
     transport: BrowserTransport,
     facts: list[DocumentFact],
     budgets: DriverBudgets | None = None,
+    mapper: Mapper | None = None,
 ) -> DriveResult:
-    """Fill every fact-mappable field on the attached page, verifying each
-    action. Never submits: the goal is fill-and-stop-at-final-review
-    (invariant 1); submission approval is out of the driver's hands."""
+    """Fill every approved-mappable field on the attached page, verifying
+    each action. Never submits (invariant 1)."""
     budgets = budgets or DriverBudgets()
+    mapper = mapper or DeterministicMapper()
     facts_by_key = {f.key: f for f in facts}
     result = DriveResult(outcome=RunOutcome.FATAL_FAILURE, steps_used=0)
 
-    transport.attach()
+    session = transport.attach()
     observation = transport.observe()
     sequence = 0
     retries: dict[str, int] = {}
+    blocked_fields: set[str] = set()
+    mapping: MappingOutcome | None = None
+    mapped_fingerprint: str | None = None
 
     while result.steps_used < budgets.max_steps:
         if observation.login_detected or observation.captcha_detected:
@@ -61,32 +75,53 @@ def run_fill(
             result.detail = "login or CAPTCHA present; human takeover required (invariant 2)"
             return result
 
-        sequence += 1
-        target_field = None
-        action = plan_next_action(
-            observation,
-            facts_by_key,
-            sequence_number=sequence,
-            attempt=0,
-        )
-        if action is not None:
-            target_field = action.target.field_id if action.target else None
-            attempt = retries.get(target_field or "", 0)
-            if attempt > 0:
-                action = plan_next_action(
-                    observation, facts_by_key, sequence_number=sequence, attempt=attempt
-                )
+        # Re-map only when the page structure changed (fingerprints are
+        # value-free, so filling fields does not trigger remapping).
+        if mapping is None or mapped_fingerprint != observation.page_fingerprint:
+            mapping = mapper.map(observation, facts_by_key)
+            mapped_fingerprint = observation.page_fingerprint
+            result.model_calls.extend(mapping.model_calls)
+            for question in mapping.questions:
+                if all(q.question_id != question.question_id for q in result.questions):
+                    result.questions.append(question)
 
-        if action is None:
-            missing = unmapped_required_fields(observation, facts_by_key)
-            if missing:
-                result.outcome = RunOutcome.NEEDS_USER
-                result.unmapped_required = missing
-                result.detail = "required fields lack facts; clarification needed"
-            else:
-                result.outcome = RunOutcome.COMPLETED
-                result.detail = "all mappable fields filled and verified; submission not attempted"
-            return result
+        # Next unsatisfied, unblocked assignment in document order.
+        next_assignment = None
+        for field_id, assignment in mapping.assignments.items():
+            if field_id in blocked_fields:
+                continue
+            fresh = next((f for f in observation.fields if f.field_id == field_id), None)
+            if fresh is None:
+                continue
+            if not assignment_satisfied(fresh, assignment.value, assignment.checked):
+                next_assignment = (field_id, assignment, fresh)
+                break
+
+        if next_assignment is None:
+            return _finish(result, mapping, blocked_fields)
+
+        field_id, assignment, fresh_field = next_assignment
+        sequence += 1
+        action = build_action_for(
+            fresh_field,
+            run_id=session.run_id,
+            tab_id=session.tab_id,
+            origin=session.origin,
+            value=assignment.value,
+            checked=assignment.checked,
+            sequence_number=sequence,
+            source_observation_seq=observation.observation_seq,
+            value_ref=f"fact://{assignment.fact.fact_id}",
+            attempt=retries.get(field_id, 0),
+        )
+
+        # Deterministic policy gate before dispatch (invariant: every action).
+        decision = check_action(action, observation, mapping.approved_values())
+        if decision.decision is PolicyDecisionKind.BLOCK:
+            result.policy_decisions.append(decision)
+            blocked_fields.add(field_id)
+            continue
+        result.policy_decisions.append(decision)
 
         outcome = transport.execute(action)
         result.steps_used += 1
@@ -114,19 +149,19 @@ def run_fill(
         if verification is None:
             continue
         if verification.status is VerificationStatus.SUCCESS:
-            if target_field:
-                result.filled_fields.append(target_field)
-                retries.pop(target_field, None)
+            result.filled_fields.append(field_id)
+            retries.pop(field_id, None)
             continue
         if verification.status in (
             VerificationStatus.RETRYABLE_FAILURE,
             VerificationStatus.NEEDS_REPERCEPTION,
         ):
-            key = target_field or "unknown"
-            retries[key] = retries.get(key, 0) + 1
-            if retries[key] > budgets.max_retries_per_action:
+            retries[field_id] = retries.get(field_id, 0) + 1
+            if retries[field_id] > budgets.max_retries_per_action:
                 result.outcome = RunOutcome.BUDGET_EXHAUSTED
-                result.detail = f"retry budget exhausted on {key} ({verification.failure_class})"
+                result.detail = (
+                    f"retry budget exhausted on {field_id} ({verification.failure_class})"
+                )
                 return result
             observation = transport.observe()
             continue
@@ -144,4 +179,24 @@ def run_fill(
 
     result.outcome = RunOutcome.BUDGET_EXHAUSTED
     result.detail = f"step budget ({budgets.max_steps}) exhausted"
+    return result
+
+
+def _finish(result: DriveResult, mapping: MappingOutcome, blocked_fields: set[str]) -> DriveResult:
+    result.unmapped_required = [
+        q.field_id
+        for q in result.questions
+        if q.kind is QuestionKind.MISSING_FACT and q.field_id is not None
+    ]
+    if result.questions or blocked_fields:
+        result.outcome = RunOutcome.NEEDS_USER
+        parts = []
+        if result.questions:
+            parts.append(f"{len(result.questions)} clarification question(s)")
+        if blocked_fields:
+            parts.append(f"{len(blocked_fields)} policy-blocked field(s)")
+        result.detail = "; ".join(parts) + "; everything else filled and verified"
+    else:
+        result.outcome = RunOutcome.COMPLETED
+        result.detail = "all mappable fields filled and verified; submission not attempted"
     return result

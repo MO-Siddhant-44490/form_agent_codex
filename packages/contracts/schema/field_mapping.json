@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "One proposed field->fact assignment. `selected_option_value` carries a\nmodel-chosen option for enumerated controls; it must exist among the\nfield's observed options or policy discards the mapping.",
+  "properties": {
+    "confidence": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Confidence",
+      "type": "number"
+    },
+    "fact_key": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Fact Key"
+    },
+    "field_id": {
+      "title": "Field Id",
+      "type": "string"
+    },
+    "needs_clarification": {
+      "default": false,
+      "title": "Needs Clarification",
+      "type": "boolean"
+    },
+    "reason": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Reason"
+    },
+    "selected_option_value": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Selected Option Value"
+    }
+  },
+  "required": [
+    "field_id",
+    "confidence"
+  ],
+  "title": "FieldMapping",
+  "type": "object",
+  "x-protocol-version": "1.0"
+}

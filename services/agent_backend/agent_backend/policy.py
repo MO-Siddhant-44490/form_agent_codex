@@ -1,0 +1,115 @@
+"""Deterministic policy gate (plan.md §7.5, Module 9 subset): every proposed
+action is checked here before dispatch, whatever proposed it. Model output
+grants nothing — this gate re-derives safety from the observation and the
+provenance of the value (invariants 2, 5, 11)."""
+
+from form_contracts import (
+    ActionKind,
+    BrowserAction,
+    FormField,
+    PageObservation,
+    PolicyDecision,
+    PolicyDecisionKind,
+    PolicyRule,
+)
+
+# Field-mutating kinds must target a field present in the fresh observation.
+VALUE_KINDS = frozenset(
+    {
+        ActionKind.SET_TEXT,
+        ActionKind.SET_NUMBER,
+        ActionKind.SET_DATE,
+        ActionKind.SELECT_OPTION,
+        ActionKind.SET_CHECKBOX,
+        ActionKind.SET_RADIO,
+        ActionKind.UPLOAD_FILE,
+    }
+)
+
+CREDENTIAL_INPUT_TYPES = frozenset({"password"})
+
+
+def _block(action: BrowserAction, rule: PolicyRule, detail: str) -> PolicyDecision:
+    return PolicyDecision(
+        action_id=action.action_id,
+        decision=PolicyDecisionKind.BLOCK,
+        rule=rule,
+        detail=detail,
+    )
+
+
+def check_action(
+    action: BrowserAction,
+    observation: PageObservation,
+    approved_values: dict[str, str | None],
+) -> PolicyDecision:
+    """`approved_values` maps field_id -> the fact-derived value the mapper
+    approved for it (None for checkbox state changes). Any value not in that
+    map has no provenance and is blocked (invariant 11)."""
+    # Normalize the kind: an action smuggled past schema validation may carry
+    # a raw string, and the gate must still classify it correctly.
+    kind = ActionKind(action.kind)
+
+    if action.origin != observation.origin:
+        return _block(
+            action,
+            PolicyRule.ORIGIN_MISMATCH,
+            f"action origin {action.origin} != page origin {observation.origin}",
+        )
+
+    if kind is ActionKind.SUBMIT and not action.approval_token_id:
+        return _block(action, PolicyRule.SUBMIT_WITHOUT_APPROVAL, "no approval token")
+
+    if kind in VALUE_KINDS:
+        field = _find_field(observation, action)
+        if field is None:
+            return _block(
+                action,
+                PolicyRule.UNKNOWN_TARGET,
+                f"target {action.target.field_id if action.target else None} "
+                "not present in the fresh observation",
+            )
+        if not field.visible:
+            return _block(action, PolicyRule.HIDDEN_FIELD, f"{field.field_id} is not visible")
+        if field.value_redacted or field.input_type in CREDENTIAL_INPUT_TYPES:
+            return _block(
+                action,
+                PolicyRule.CREDENTIAL_FIELD,
+                f"{field.field_id} is credential-like; never filled (invariant 2)",
+            )
+        if action.target and action.target.field_id not in approved_values:
+            return _block(
+                action,
+                PolicyRule.VALUE_WITHOUT_PROVENANCE,
+                f"no approved mapping for {action.target.field_id}",
+            )
+        if action.resolved_value is not None:
+            approved = approved_values.get(action.target.field_id if action.target else "")
+            if action.resolved_value != approved:
+                return _block(
+                    action,
+                    PolicyRule.VALUE_WITHOUT_PROVENANCE,
+                    "resolved value differs from the fact-derived value",
+                )
+            if field.options is not None and action.resolved_value not in field.options:
+                return _block(
+                    action,
+                    PolicyRule.UNSUPPORTED_OPTION,
+                    f"{action.resolved_value!r} is not an observed option",
+                )
+
+    return PolicyDecision(action_id=action.action_id, decision=PolicyDecisionKind.ALLOW)
+
+
+def _find_field(observation: PageObservation, action: BrowserAction) -> FormField | None:
+    if action.target is None:
+        return None
+    for field in observation.fields:
+        if field.field_id == action.target.field_id:
+            return field
+        if (
+            action.target.name_attr is not None
+            and field.target.name_attr == action.target.name_attr
+        ):
+            return field
+    return None

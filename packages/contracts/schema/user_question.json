@@ -1,0 +1,71 @@
+{
+  "$defs": {
+    "QuestionKind": {
+      "enum": [
+        "missing_fact",
+        "ambiguous_mapping",
+        "conflicting_facts",
+        "low_confidence"
+      ],
+      "title": "QuestionKind",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "fact_keys": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Fact Keys",
+      "type": "array"
+    },
+    "field_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Field Id"
+    },
+    "kind": {
+      "$ref": "#/$defs/QuestionKind"
+    },
+    "options": {
+      "anyOf": [
+        {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Options"
+    },
+    "prompt": {
+      "title": "Prompt",
+      "type": "string"
+    },
+    "question_id": {
+      "title": "Question Id",
+      "type": "string"
+    }
+  },
+  "required": [
+    "question_id",
+    "kind",
+    "prompt"
+  ],
+  "title": "UserQuestion",
+  "type": "object",
+  "x-protocol-version": "1.0"
+}

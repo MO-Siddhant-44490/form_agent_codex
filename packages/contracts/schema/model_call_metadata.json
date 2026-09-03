@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Accounting for one model call (plan.md \u00a711.2): what ran, how long, how\nmuch \u2014 never the raw request or response content.",
+  "properties": {
+    "input_tokens": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Input Tokens"
+    },
+    "latency_ms": {
+      "minimum": 0,
+      "title": "Latency Ms",
+      "type": "integer"
+    },
+    "model_id": {
+      "title": "Model Id",
+      "type": "string"
+    },
+    "output_tokens": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Output Tokens"
+    },
+    "request_fingerprint": {
+      "title": "Request Fingerprint",
+      "type": "string"
+    },
+    "retries": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Retries",
+      "type": "integer"
+    },
+    "schema_valid": {
+      "title": "Schema Valid",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "model_id",
+    "latency_ms",
+    "schema_valid",
+    "request_fingerprint"
+  ],
+  "title": "ModelCallMetadata",
+  "type": "object",
+  "x-protocol-version": "1.0"
+}

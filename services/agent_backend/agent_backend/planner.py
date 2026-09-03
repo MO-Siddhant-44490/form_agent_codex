@@ -113,3 +113,54 @@ def plan_next_action(
             source_observation_seq=observation.observation_seq,
         )
     return None
+
+
+def build_action_for(
+    field: FormField,
+    *,
+    run_id: str,
+    tab_id: int,
+    origin: str,
+    value: str | None,
+    checked: bool | None,
+    sequence_number: int,
+    source_observation_seq: int,
+    value_ref: str,
+    attempt: int = 0,
+) -> BrowserAction:
+    """Build the typed action applying an approved assignment to a field.
+    Used by the mapping-driven driver; plan_next_action above remains the
+    name-match-only convenience path.
+
+    Unknown input types fall back to SET_TEXT rather than crashing: a hostile
+    or buggy assignment must still reach the policy gate, which is the layer
+    that vetoes it."""
+    kind = KIND_FOR_INPUT_TYPE.get(field.input_type, ActionKind.SET_TEXT)
+    suffix = f":try{attempt}" if attempt > 0 else ""
+    return BrowserAction(
+        action_id=f"{run_id}:action-{sequence_number}",
+        run_id=run_id,
+        tab_id=tab_id,
+        origin=origin,
+        sequence_number=sequence_number,
+        kind=kind,
+        target=field.target,
+        value_ref=value_ref,
+        resolved_value=value,
+        expected_effect=ExpectedEffect(
+            field_value=value,
+            checked=checked,
+            validation_error=False,
+        ),
+        risk=RiskLevel.LOW,
+        idempotency_key=(
+            f"{run_id}:{field.field_id}:{checked if value is None else value}{suffix}"
+        ),
+        source_observation_seq=source_observation_seq,
+    )
+
+
+def assignment_satisfied(field: FormField, value: str | None, checked: bool | None) -> bool:
+    if checked is not None:
+        return field.checked == checked
+    return field.current_value == value

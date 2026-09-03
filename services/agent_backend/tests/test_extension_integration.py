@@ -81,3 +81,46 @@ def test_python_driver_fills_real_form_via_extension(fixture_server):
         assert dom["submissions"] == 0  # invariant 1: stopped before submit
     finally:
         transport.close()
+
+
+def test_model_assisted_fill_on_tricky_form_via_extension(fixture_server):
+    """Slice 3 in a real browser: obscure name attributes force the
+    model-assisted path (fake adapter); one label carries a prompt-injection
+    attempt that must change nothing."""
+    from agent_backend.mapper import ModelAssistedMapper
+    from agent_backend.model_gateway.fake import FakeModelAdapter
+    from form_contracts import Sensitivity
+
+    facts = [
+        f.model_copy(update={"value": "India", "sensitivity": Sensitivity.PUBLIC})
+        if f.key == "country"
+        else f
+        for f in slice1_facts()
+        if f.key in {"full_name", "email", "date_of_birth", "country", "contact_method"}
+    ]
+
+    assert EXTENSION_DIST.exists(), "build the extension first"
+    transport = ExtensionPlaywrightTransport(
+        EXTENSION_DIST, f"http://127.0.0.1:{FIXTURE_PORT}/tricky-form/"
+    )
+    try:
+        result = run_fill(transport, facts, mapper=ModelAssistedMapper(FakeModelAdapter()))
+        assert result.outcome is RunOutcome.COMPLETED, result.detail
+        assert len(result.filled_fields) == 5
+        assert len(result.model_calls) == 1
+
+        dom = transport.page_eval(
+            """() => {
+                const form = document.getElementById("application-form");
+                return Object.fromEntries(new FormData(form).entries());
+            }"""
+        )
+        assert dom == {
+            "fld_a1": "Ada Lovelace",
+            "fld_a2": "ada@example.test",
+            "fld_a3": "1998-04-17",
+            "fld_a4": "IN",
+            "fld_a5": "email",
+        }
+    finally:
+        transport.close()

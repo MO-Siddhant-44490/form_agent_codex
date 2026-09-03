@@ -1,0 +1,66 @@
+{
+  "$defs": {
+    "PolicyDecisionKind": {
+      "enum": [
+        "ALLOW",
+        "BLOCK"
+      ],
+      "title": "PolicyDecisionKind",
+      "type": "string"
+    },
+    "PolicyRule": {
+      "enum": [
+        "credential_field",
+        "hidden_field",
+        "unknown_target",
+        "value_without_provenance",
+        "origin_mismatch",
+        "submit_without_approval",
+        "unsupported_option"
+      ],
+      "title": "PolicyRule",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "action_id": {
+      "title": "Action Id",
+      "type": "string"
+    },
+    "decision": {
+      "$ref": "#/$defs/PolicyDecisionKind"
+    },
+    "detail": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Detail"
+    },
+    "rule": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/PolicyRule"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    }
+  },
+  "required": [
+    "action_id",
+    "decision"
+  ],
+  "title": "PolicyDecision",
+  "type": "object",
+  "x-protocol-version": "1.0"
+}
