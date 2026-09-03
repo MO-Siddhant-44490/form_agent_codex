@@ -67,6 +67,10 @@ class BrowserAction(StrictModel):
     # Values are referenced by fact id (fact://...) or question id
     # (answer://...); raw values are resolved only after policy approval.
     value_ref: str | None = None
+    # The single policy-approved value the executor may apply. Populated by
+    # the dispatcher after the policy gate; must never appear in traces
+    # (redaction.py treats it as sensitive).
+    resolved_value: str | None = None
     expected_effect: ExpectedEffect | None = None
     risk: RiskLevel = RiskLevel.LOW
     idempotency_key: str | None = None

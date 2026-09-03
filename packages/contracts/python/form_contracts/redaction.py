@@ -10,6 +10,7 @@ REDACTED = "[REDACTED]"
 
 # Key substrings whose values are always redacted, regardless of context.
 SENSITIVE_KEY_PATTERNS = (
+    "resolved_value",
     "password",
     "passwd",
     "otp",

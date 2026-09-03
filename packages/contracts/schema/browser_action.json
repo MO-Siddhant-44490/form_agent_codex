@@ -290,6 +290,18 @@
       "title": "Origin",
       "type": "string"
     },
+    "resolved_value": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Resolved Value"
+    },
     "risk": {
       "$ref": "#/$defs/RiskLevel",
       "default": "low"

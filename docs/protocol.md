@@ -38,10 +38,12 @@ when any of the following holds:
 2. `tab_id` does not match the attached tab.
 3. `origin` does not match the tab's current origin (re-checked at execution
    time, not attach time).
-4. `sequence_number` is not strictly greater than the last executed sequence
+4. `idempotency_key` matches an already-completed action → return the recorded
+   prior result without re-executing (duplicate delivery, invariant 6). This
+   is evaluated before the sequence check so a redelivered command reports
+   `DUPLICATE` rather than a stale-sequence rejection.
+5. `sequence_number` is not strictly greater than the last executed sequence
    number for the session (stale or replayed command).
-5. `idempotency_key` matches an already-completed action → return the recorded
-   prior result without re-executing (duplicate delivery, invariant 6).
 6. The action is `SUBMIT` and no valid, unexpired, origin-bound, unused
    `ApprovalToken` accompanies it (invariant 1). Fixture mode is the only
    exception and must be explicitly enabled per run.

@@ -1,6 +1,6 @@
 // Internal extension message contracts (background <-> content <-> sidepanel).
 // Cross-boundary payloads reuse the generated protocol types.
-import type { PageObservation } from "@form-agent/contracts";
+import type { ActionResult, BrowserAction, PageObservation, VerificationResult } from "@form-agent/contracts";
 
 export type ObserveRequest = {
   type: "FA_OBSERVE";
@@ -11,6 +11,18 @@ export type ObserveRequest = {
 
 export type ObserveResponse =
   | { ok: true; observation: PageObservation }
+  | { ok: false; error: string };
+
+export type ExecuteRequest = {
+  type: "FA_EXECUTE";
+  action: BrowserAction;
+  // Fingerprint of the observation the action was planned from; the content
+  // script refuses to act on a page that no longer matches (invariant 8).
+  expectedFingerprint: string | null;
+};
+
+export type ExecuteResponse =
+  | { ok: true; result: ActionResult }
   | { ok: false; error: string };
 
 export type PanelCommand =
@@ -25,4 +37,10 @@ export type SessionState = {
   origin: string | null;
   lastObservation: PageObservation | null;
   error: string | null;
+};
+
+export type ExecuteOutcome = {
+  result: ActionResult;
+  verification: VerificationResult | null;
+  state: SessionState;
 };

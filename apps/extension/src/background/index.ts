@@ -1,8 +1,26 @@
-// Background service worker: owns the tab session, routes observe requests,
-// and validates every observation against the generated contract schema
-// before trusting it. Slice 1: observation only — there is no action path.
-import { PageObservationSchema, type PageObservation } from "@form-agent/contracts";
-import type { ObserveRequest, ObserveResponse, PanelCommand, SessionState } from "../shared/messages";
+// Background service worker: owns the tab session and enforces the command
+// guards before anything reaches the page. Every action is validated against
+// the contract schema, guard-checked, executed by the content script, then
+// independently verified against a FRESH observation (invariants 6, 7, 8).
+import {
+  BrowserActionSchema,
+  PageObservationSchema,
+  type ActionResult,
+  type ApprovalToken,
+  type BrowserAction,
+  type PageObservation,
+} from "@form-agent/contracts";
+import { checkAction, type GuardRecords, type GuardSession } from "../guards/session-guards";
+import { verifyAction } from "../verification/verify";
+import type {
+  ExecuteOutcome,
+  ExecuteRequest,
+  ExecuteResponse,
+  ObserveRequest,
+  ObserveResponse,
+  PanelCommand,
+  SessionState,
+} from "../shared/messages";
 
 const state: SessionState = {
   attached: false,
@@ -13,6 +31,12 @@ const state: SessionState = {
   error: null,
 };
 let observationSeq = 0;
+let lastActionSeq = 0;
+let fixtureMode = false;
+const records: GuardRecords = {
+  completed: new Map<string, ActionResult>(),
+  approvals: new Map<string, ApprovalToken>(),
+};
 
 function newRunId(): string {
   return `local-${crypto.randomUUID()}`;
@@ -29,24 +53,33 @@ async function attachToTab(tabId: number, url: string): Promise<SessionState> {
   state.lastObservation = null;
   state.error = null;
   observationSeq = 0;
+  lastActionSeq = 0;
+  fixtureMode = false;
+  records.completed.clear();
+  records.approvals.clear();
   return state;
 }
 
-async function observe(): Promise<SessionState> {
-  if (!state.attached || state.tabId === null || state.runId === null) {
+async function validateSessionOrigin(): Promise<boolean> {
+  // Origin re-validation before every observe/execute (invariant 8).
+  if (!state.attached || state.tabId === null) {
     state.error = "not attached";
-    return state;
+    return false;
   }
-  // Origin re-validation on every observation (invariant 8 / plan.md §5.1):
-  // if the tab navigated cross-origin, drop the session instead of observing.
   const tab = await chrome.tabs.get(state.tabId);
   const currentOrigin = tab.url ? new URL(tab.url).origin : null;
   if (currentOrigin !== state.origin) {
     state.attached = false;
     state.error = `origin changed (${state.origin} -> ${currentOrigin}); re-attach required`;
+    return false;
+  }
+  return true;
+}
+
+async function observe(): Promise<SessionState> {
+  if (!(await validateSessionOrigin()) || state.runId === null || state.tabId === null) {
     return state;
   }
-
   const request: ObserveRequest = {
     type: "FA_OBSERVE",
     runId: state.runId,
@@ -63,6 +96,85 @@ async function observe(): Promise<SessionState> {
   state.lastObservation = parsed;
   state.error = null;
   return state;
+}
+
+function rejected(action: BrowserAction, reason: string, detail: string): ActionResult {
+  return {
+    action_id: action.action_id,
+    status: "REJECTED",
+    rejection_reason: reason as ActionResult["rejection_reason"],
+    error: detail,
+    executed_at: new Date().toISOString(),
+  };
+}
+
+async function execute(rawAction: unknown): Promise<ExecuteOutcome> {
+  // 1. Contract validation: malformed actions never reach guard logic.
+  const action = BrowserActionSchema.parse(rawAction);
+
+  if (!(await validateSessionOrigin()) || state.tabId === null || state.runId === null) {
+    return {
+      result: rejected(action, "origin_mismatch", state.error ?? "not attached"),
+      verification: null,
+      state,
+    };
+  }
+
+  // 2. Deterministic guards: binding, replay, idempotency, submission lock.
+  const session: GuardSession = {
+    runId: state.runId,
+    tabId: state.tabId,
+    origin: state.origin!,
+    lastActionSeq,
+    lastObservationSeq: state.lastObservation?.observation_seq ?? 0,
+    fixtureMode,
+  };
+  const guardVerdict = checkAction(session, records, action);
+  if (!guardVerdict.allowed) {
+    return {
+      result: rejected(action, guardVerdict.reason, guardVerdict.detail),
+      verification: null,
+      state,
+    };
+  }
+  if (guardVerdict.duplicate) {
+    // Duplicate delivery: return the recorded result, repeat nothing.
+    return {
+      result: { ...guardVerdict.duplicate, status: "DUPLICATE" },
+      verification: null,
+      state,
+    };
+  }
+
+  // 3. Execute in the page.
+  const request: ExecuteRequest = {
+    type: "FA_EXECUTE",
+    action,
+    expectedFingerprint: state.lastObservation?.page_fingerprint ?? null,
+  };
+  const response = (await chrome.tabs.sendMessage(state.tabId, request)) as ExecuteResponse;
+  if (!response.ok) {
+    return { result: rejected(action, "unsupported", response.error), verification: null, state };
+  }
+  const result = response.result;
+
+  if (result.status === "EXECUTED") {
+    lastActionSeq = action.sequence_number;
+    if (action.idempotency_key) records.completed.set(action.idempotency_key, result);
+    if (action.kind === "SUBMIT" && action.approval_token_id) {
+      // Single-use token: consumed on execution.
+      const token = records.approvals.get(action.approval_token_id);
+      if (token) records.approvals.set(token.token_id, { ...token, used: true });
+    }
+  }
+
+  // 4. Independent verification against a fresh observation (invariant 7).
+  let verification = null;
+  if (result.status === "EXECUTED") {
+    await observe();
+    if (state.lastObservation) verification = verifyAction(action, state.lastObservation);
+  }
+  return { result, verification, state };
 }
 
 async function attachActiveTab(): Promise<SessionState> {
@@ -99,19 +211,29 @@ chrome.runtime.onMessage.addListener(
 
 chrome.sidePanel?.setPanelBehavior?.({ openPanelOnActionClick: true }).catch(() => {});
 
-// Test hooks: lets the Playwright harness drive attach/observe from the
-// service-worker context, standing in for the user gesture that dev/test
-// host_permissions make unnecessary. Excluded from any store build.
+// Test hooks: lets the Playwright harness drive the loop from the
+// service-worker context, standing in for the side panel's user gesture and
+// the (Slice 4) backend. Excluded from any store build.
 declare global {
   // eslint-disable-next-line no-var
   var __formAgentTest: {
     attachToTab(tabId: number, url: string): Promise<SessionState>;
     observe(): Promise<SessionState>;
+    execute(action: unknown): Promise<ExecuteOutcome>;
     getState(): SessionState;
+    setFixtureMode(on: boolean): void;
+    grantApproval(token: ApprovalToken): void;
   };
 }
 globalThis.__formAgentTest = {
   attachToTab,
   observe,
+  execute,
   getState: () => state,
+  setFixtureMode: (on: boolean) => {
+    fixtureMode = on;
+  },
+  grantApproval: (token: ApprovalToken) => {
+    records.approvals.set(token.token_id, token);
+  },
 };
