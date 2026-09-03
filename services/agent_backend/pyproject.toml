@@ -10,6 +10,10 @@ dependencies = [
     "pymupdf>=1.28.2",
     "langgraph>=1.2.11",
     "langgraph-checkpoint-sqlite>=3.1.1",
+    "fastapi>=0.115",
+    "sqlalchemy>=2.0",
+    "cryptography==43.0.3",
+    "python-multipart>=0.0.9",
 ]
 
 [project.optional-dependencies]
@@ -19,6 +23,11 @@ docling = [
 bedrock = [
     "boto3>=1.43.87",
 ]
+server = [
+    "boto3>=1.34",
+    "psycopg[binary]>=3.2",
+    "uvicorn>=0.30",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -26,3 +35,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["agent_backend"]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.27",
+    "pytest-asyncio>=0.23",
+]

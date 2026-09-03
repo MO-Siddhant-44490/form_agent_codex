@@ -10,3 +10,4 @@ dist/
 apps/extension/dist/
 test-results/
 playwright-report/
+_object_store/

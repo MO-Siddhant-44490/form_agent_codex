@@ -20,8 +20,11 @@ testpaths = ["packages/contracts/python/tests", "services/agent_backend/tests"]
 filterwarnings = [
   # PyMuPDF's SWIG bindings on Python 3.12; harmless and not ours to fix.
   "ignore:builtin type .* has no __module__ attribute:DeprecationWarning",
+  # Starlette TestClient's anyio alias; upstream, not ours.
+  "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning",
 ]
 log_cli_level = "ERROR"
+asyncio_mode = "auto"
 
 [tool.ruff]
 line-length = 100
@@ -29,3 +32,7 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# FastAPI's Depends()/File() live in argument defaults by design.
+"services/agent_backend/agent_backend/api/app.py" = ["B008"]

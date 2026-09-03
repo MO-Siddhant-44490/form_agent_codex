@@ -74,4 +74,8 @@ demo, test, or feature easier.
 - Extension build + E2E: `pnpm --filter @form-agent/extension test:e2e`
   (Playwright downloads need `NODE_EXTRA_CA_CERTS` pointing at the corporate
   proxy CA on managed machines)
+- Backend server (server extra): `uv run --extra server python -m agent_backend.api.server`
+- Durable infra (Slice 4+): `docker compose -f infra/compose.yaml up -d`, then
+  set `DATABASE_URL`; unset means in-memory SQLite. Postgres tests run with
+  `TEST_DATABASE_URL` set (see infra/README.md).
 - Schema drift check: `./packages/contracts/check_drift.sh`

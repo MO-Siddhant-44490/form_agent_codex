@@ -1,0 +1,40 @@
+# Local development stack (plan.md §20). Brings up PostgreSQL and MinIO for
+# Slice 4+ durable deployments. Slices 1-3 need none of this; the backend
+# defaults to in-memory/SQLite when DATABASE_URL is unset.
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: form_agent
+      POSTGRES_PASSWORD: form_agent_dev
+      POSTGRES_DB: form_agent
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U form_agent"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: form_agent
+      MINIO_ROOT_PASSWORD: form_agent_dev
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  pgdata:
+  miniodata:
