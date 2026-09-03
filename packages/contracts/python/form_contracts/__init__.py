@@ -39,6 +39,8 @@ from .observation import (
     DialogKind,
     FormField,
     FrameInfo,
+    NavigationControl,
+    NavigationKind,
     PageClass,
     PageClassCandidate,
     PageObservation,
@@ -69,6 +71,7 @@ from .verification import (
 EXPORTED_MODELS = [
     DocumentFact,
     Derivation,
+    NavigationControl,
     FieldMapping,
     FieldMappingBatch,
     UserQuestion,

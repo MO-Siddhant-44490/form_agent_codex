@@ -54,6 +54,25 @@ export function resolveTarget(doc: Document, target: TargetDescriptor): Resolved
     }
   }
 
+  // 4. Clickable targets (buttons, links, submit inputs) — used by CLICK,
+  // NAVIGATE_NEXT, DISMISS_DIALOG. Navigation controls often have no stable
+  // id, so match by accessible name / visible text.
+  if (target.role === "button" || target.input_type === "submit" || target.accessible_name) {
+    const clickable = Array.from(
+      doc.querySelectorAll<HTMLElement>(
+        'button, input[type="submit"], input[type="button"], [role="button"], a[href]',
+      ),
+    ).filter((el) => {
+      if (!isVisible(el)) return false;
+      const name =
+        el instanceof HTMLInputElement
+          ? el.value || accessibleName(el)
+          : accessibleName(el) || el.textContent?.trim();
+      return name === target.accessible_name;
+    });
+    if (clickable.length >= 1) return { kind: "element", element: clickable[0]! };
+  }
+
   return { kind: "not-found", detail: `no element for ${target.field_id}` };
 }
 

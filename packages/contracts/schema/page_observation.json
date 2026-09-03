@@ -210,6 +210,50 @@
       "title": "FrameInfo",
       "type": "object"
     },
+    "NavigationControl": {
+      "additionalProperties": false,
+      "description": "A control that advances, reverses, or submits a multi-step form.",
+      "properties": {
+        "control_id": {
+          "title": "Control Id",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/NavigationKind"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "target": {
+          "$ref": "#/$defs/TargetDescriptor"
+        }
+      },
+      "required": [
+        "control_id",
+        "kind",
+        "target"
+      ],
+      "title": "NavigationControl",
+      "type": "object"
+    },
+    "NavigationKind": {
+      "enum": [
+        "next",
+        "previous",
+        "submit"
+      ],
+      "title": "NavigationKind",
+      "type": "string"
+    },
     "PageClass": {
       "enum": [
         "form",
@@ -416,6 +460,13 @@
       "title": "Login Detected",
       "type": "boolean"
     },
+    "navigation": {
+      "items": {
+        "$ref": "#/$defs/NavigationControl"
+      },
+      "title": "Navigation",
+      "type": "array"
+    },
     "observation_seq": {
       "minimum": 0,
       "title": "Observation Seq",
@@ -437,6 +488,18 @@
     "run_id": {
       "title": "Run Id",
       "type": "string"
+    },
+    "step_label": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Step Label"
     },
     "tab_id": {
       "title": "Tab Id",

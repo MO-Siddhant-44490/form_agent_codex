@@ -15,6 +15,8 @@ from form_contracts import (
     BrowserAction,
     FailureClass,
     FormField,
+    NavigationControl,
+    NavigationKind,
     PageClass,
     PageClassCandidate,
     PageObservation,
@@ -97,9 +99,46 @@ class FakeTransport:
     submissions: list[str] = dc_field(default_factory=list)
     crash_after_fields: set[str] = dc_field(default_factory=set)
     execution_counts: dict[str, int] = dc_field(default_factory=dict)
+    # Multi-page: when set, observe() serves pages[current_page] and
+    # NAVIGATE_NEXT advances. Each page but the last exposes a NEXT control.
+    pages: list[list[FakeField]] | None = None
+    current_page: int = 0
 
     def grant_approval(self, token: ApprovalToken) -> None:
         self.approvals[token.token_id] = token
+
+    def _active_fields(self) -> list["FakeField"]:
+        if self.pages is not None:
+            return self.pages[self.current_page]
+        return self.fields
+
+    def _navigation(self) -> list[NavigationControl]:
+        if self.pages is None:
+            return []
+        controls: list[NavigationControl] = []
+        if self.current_page < len(self.pages) - 1:
+            controls.append(
+                NavigationControl(
+                    control_id="next-btn",
+                    kind=NavigationKind.NEXT,
+                    label="Next",
+                    target=TargetDescriptor(
+                        field_id="next-btn", role="button", accessible_name="Next"
+                    ),
+                )
+            )
+        else:
+            controls.append(
+                NavigationControl(
+                    control_id="submit-btn",
+                    kind=NavigationKind.SUBMIT,
+                    label="Submit",
+                    target=TargetDescriptor(
+                        field_id="submit-btn", role="button", accessible_name="Submit"
+                    ),
+                )
+            )
+        return controls
 
     def attach(self) -> TabSession:
         return TabSession(
@@ -131,7 +170,10 @@ class FakeTransport:
 
     def observe(self) -> PageObservation:
         self.observation_seq += 1
-        structure = ",".join(f"{f.field_id}|{f.input_type}" for f in self.fields)
+        active = self._active_fields()
+        structure = f"page{self.current_page}:" + ",".join(
+            f"{f.field_id}|{f.input_type}" for f in active
+        )
         fingerprint = hashlib.sha256(structure.encode()).hexdigest()
         return PageObservation(
             run_id=RUN_ID,
@@ -148,7 +190,8 @@ class FakeTransport:
                     confidence=0.9,
                 )
             ],
-            fields=[self._form_field(f) for f in self.fields],
+            fields=[self._form_field(f) for f in active],
+            navigation=self._navigation(),
             login_detected=self.login_page,
         )
 
@@ -176,6 +219,9 @@ class FakeTransport:
             if not self.allow_submit:
                 raise AssertionError("driver proposed SUBMIT: invariant 1 violation")
             return self._execute_submit(action)
+
+        if action.kind is ActionKind.NAVIGATE_NEXT:
+            return self._execute_navigate(action)
 
         if action.idempotency_key and action.idempotency_key in self.executed_keys:
             prior = self.executed_keys[action.idempotency_key]
@@ -205,7 +251,12 @@ class FakeTransport:
             )
 
         target = next(
-            (f for f in self.fields if action.target and f.field_id == action.target.field_id), None
+            (
+                f
+                for f in self._active_fields()
+                if action.target and f.field_id == action.target.field_id
+            ),
+            None,
         )
         if target is None:
             return ExecuteOutcome(
@@ -236,6 +287,30 @@ class FakeTransport:
 
         observation = self.observe()
         verification = self._verify(action, target, observation)
+        return ExecuteOutcome(result=result, verification=verification, observation=observation)
+
+    def _execute_navigate(self, action: BrowserAction) -> ExecuteOutcome:
+        if action.sequence_number <= self.last_action_seq:
+            return ExecuteOutcome(
+                result=self._result(
+                    action, ActionResultStatus.REJECTED, RejectionReason.STALE_SEQUENCE, "stale"
+                ),
+                verification=None,
+                observation=None,
+            )
+        self.last_action_seq = action.sequence_number
+        if self.pages is not None and self.current_page < len(self.pages) - 1:
+            self.current_page += 1
+        result = self._result(action, ActionResultStatus.EXECUTED)
+        observation = self.observe()
+        verification = VerificationResult(
+            action_id=action.action_id,
+            status=VerificationStatus.SUCCESS,
+            evidence=VerificationEvidence(
+                page_fingerprint=observation.page_fingerprint, notes="navigated to next page"
+            ),
+            recommended_transition=RecommendedTransition.CONTINUE,
+        )
         return ExecuteOutcome(result=result, verification=verification, observation=observation)
 
     def _execute_submit(self, action: BrowserAction) -> ExecuteOutcome:

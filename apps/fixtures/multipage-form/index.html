@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Multi-page Application — Fixture</title>
+<style>body{font-family:system-ui;max-width:600px;margin:2rem auto;padding:0 1rem}
+label{display:block;margin-top:1rem;font-weight:600}input,select{display:block;margin-top:.25rem;padding:.4rem;width:100%;box-sizing:border-box}
+.page{display:none}.page.active{display:block}button{margin-top:1.5rem;padding:.5rem 1.5rem}
+.progress{color:#666;font-size:.9rem}</style>
+</head>
+<body>
+<h1>Job Application</h1>
+<form id="application-form">
+  <p class="progress" id="progress">Step 1 of 3</p>
+
+  <div class="page active" data-page="0">
+    <label for="name">Full name</label>
+    <input id="name" name="full_name" type="text" required>
+    <label for="email">Email address</label>
+    <input id="email" name="email" type="email" required>
+    <button type="button" class="next">Continue</button>
+  </div>
+
+  <div class="page" data-page="1">
+    <label for="dob">Date of birth</label>
+    <input id="dob" name="date_of_birth" type="date" required>
+    <label for="country">Country</label>
+    <select id="country" name="country" required>
+      <option value="">Select…</option><option value="IN">India</option><option value="US">United States</option>
+    </select>
+    <button type="button" class="prev">Back</button>
+    <button type="button" class="next">Continue</button>
+  </div>
+
+  <div class="page" data-page="2">
+    <label for="experience">Years of experience</label>
+    <input id="experience" name="years_experience" type="number" required>
+    <button type="button" class="prev">Back</button>
+    <button id="submit-btn" type="submit">Submit application</button>
+  </div>
+</form>
+<div id="result" hidden></div>
+<script>
+  let current = 0;
+  const pages = [...document.querySelectorAll(".page")];
+  const progress = document.getElementById("progress");
+  function show(i){ pages.forEach((p,idx)=>p.classList.toggle("active", idx===i)); progress.textContent=`Step ${i+1} of ${pages.length}`; current=i; }
+  document.querySelectorAll(".next").forEach(b=>b.addEventListener("click",()=>{ if(current<pages.length-1) show(current+1); }));
+  document.querySelectorAll(".prev").forEach(b=>b.addEventListener("click",()=>{ if(current>0) show(current-1); }));
+  window.__fixture = { id:"multipage-form", submissions:[], get currentPage(){return current;} };
+  document.getElementById("application-form").addEventListener("submit",e=>{ e.preventDefault();
+    const data=Object.fromEntries(new FormData(e.target).entries());
+    window.__fixture.submissions.push(data);
+    const r=document.getElementById("result"); r.hidden=false; r.textContent="SUBMITTED"; });
+</script>
+</body>
+</html>

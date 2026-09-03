@@ -35,6 +35,7 @@
   ],
   "dialogs": [],
   "iframes": [],
+  "navigation": [],
   "login_detected": false,
   "captcha_detected": false,
   "dom_stable": true

@@ -93,6 +93,21 @@ class FrameInfo(StrictModel):
     _origin_ok = field_validator("origin")(validate_origin)
 
 
+class NavigationKind(StrEnum):
+    NEXT = "next"
+    PREVIOUS = "previous"
+    SUBMIT = "submit"
+
+
+class NavigationControl(StrictModel):
+    """A control that advances, reverses, or submits a multi-step form."""
+
+    control_id: str
+    kind: NavigationKind
+    target: TargetDescriptor
+    label: str | None = None
+
+
 class PageObservation(StrictModel):
     run_id: str
     tab_id: int
@@ -107,6 +122,9 @@ class PageObservation(StrictModel):
     fields: list[FormField] = Field(default_factory=list)
     dialogs: list[DialogInfo] = Field(default_factory=list)
     iframes: list[FrameInfo] = Field(default_factory=list)
+    navigation: list[NavigationControl] = Field(default_factory=list)
+    # Multi-page progress hint when the page exposes one ("Step 2 of 4").
+    step_label: str | None = None
     login_detected: bool = False
     captcha_detected: bool = False
     dom_stable: bool = True

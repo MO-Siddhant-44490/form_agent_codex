@@ -12,6 +12,7 @@
     "field_mapping_batch.json",
     "form_field.json",
     "model_call_metadata.json",
+    "navigation_control.json",
     "page_observation.json",
     "policy_decision.json",
     "run_state.json",

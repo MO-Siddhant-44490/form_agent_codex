@@ -6,13 +6,21 @@ of what proposed it; blocked fields are reported, never silently skipped."""
 from dataclasses import dataclass, field
 
 from form_contracts import (
+    ActionKind,
+    BrowserAction,
     DocumentFact,
+    ExpectedEffect,
     ModelCallMetadata,
+    NavigationControl,
+    NavigationKind,
+    PageObservation,
     PolicyDecision,
     PolicyDecisionKind,
     QuestionKind,
     RejectionReason,
+    RiskLevel,
     RunOutcome,
+    TabSession,
     UserQuestion,
     VerificationResult,
     VerificationStatus,
@@ -28,8 +36,9 @@ from .transport import BrowserTransport
 class DriverBudgets:
     """Hard caps forcing termination with a classified outcome (invariant 12)."""
 
-    max_steps: int = 40
+    max_steps: int = 60
     max_retries_per_action: int = 2
+    max_pages: int = 15
 
 
 @dataclass
@@ -46,6 +55,35 @@ class DriveResult:
 
 
 _REOBSERVE_REJECTIONS = {RejectionReason.STALE_OBSERVATION, RejectionReason.STALE_SEQUENCE}
+
+
+def _find_next_control(observation: PageObservation) -> NavigationControl | None:
+    """The control that advances to the next page, if any."""
+    for control in observation.navigation:
+        if control.kind is NavigationKind.NEXT:
+            return control
+    return None
+
+
+def _navigation_action(
+    observation: PageObservation,
+    session: TabSession,
+    control: NavigationControl,
+    sequence_number: int,
+) -> BrowserAction:
+    return BrowserAction(
+        action_id=f"{session.run_id}:nav-{sequence_number}",
+        run_id=session.run_id,
+        tab_id=session.tab_id,
+        origin=session.origin,
+        sequence_number=sequence_number,
+        kind=ActionKind.NAVIGATE_NEXT,
+        target=control.target,
+        expected_effect=ExpectedEffect(navigation_expected=True),
+        risk=RiskLevel.LOW,
+        idempotency_key=f"{session.run_id}:nav:{observation.page_fingerprint}",
+        source_observation_seq=observation.observation_seq,
+    )
 
 
 def run_fill(
@@ -66,6 +104,7 @@ def run_fill(
     sequence = 0
     retries: dict[str, int] = {}
     blocked_fields: set[str] = set()
+    visited_pages: set[str] = set()
     mapping: MappingOutcome | None = None
     mapped_fingerprint: str | None = None
 
@@ -98,7 +137,41 @@ def run_fill(
                 break
 
         if next_assignment is None:
-            return _finish(result, mapping, blocked_fields)
+            # Current page is fully filled. Advance to the next page if the
+            # form exposes a "next" control; otherwise this is the final page.
+            visited_pages.add(observation.page_fingerprint)
+            nav = _find_next_control(observation)
+            if nav is None:
+                return _finish(result, mapping, blocked_fields)
+            if len(visited_pages) > budgets.max_pages:
+                result.outcome = RunOutcome.BUDGET_EXHAUSTED
+                result.detail = f"page budget ({budgets.max_pages}) exhausted"
+                return result
+
+            sequence += 1
+            nav_action = _navigation_action(observation, session, nav, sequence)
+            decision = check_action(nav_action, observation, {})
+            result.policy_decisions.append(decision)
+            if decision.decision is PolicyDecisionKind.BLOCK:
+                return _finish(result, mapping, blocked_fields)
+
+            nav_outcome = transport.execute(nav_action)
+            result.steps_used += 1
+            if nav_outcome.result.status != "EXECUTED":
+                result.outcome = RunOutcome.BLOCKED
+                result.detail = f"navigation rejected: {nav_outcome.result.rejection_reason}"
+                return result
+
+            new_observation = nav_outcome.observation or transport.observe()
+            if (
+                new_observation.page_fingerprint == observation.page_fingerprint
+                or new_observation.page_fingerprint in visited_pages
+            ):
+                # Navigation did not reach a new page: stop rather than loop.
+                result.detail = "navigation did not advance to a new page"
+                return _finish(result, mapping, blocked_fields)
+            observation = new_observation
+            continue
 
         field_id, assignment, fresh_field = next_assignment
         sequence += 1

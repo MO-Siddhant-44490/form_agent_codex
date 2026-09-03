@@ -2,6 +2,7 @@
 // fingerprinting (plan.md §8.2). Read-only; never mutates the page.
 import type { PageObservation } from "@form-agent/contracts";
 import { discoverFields } from "./fields";
+import { summarizeNavigation } from "./navigation";
 import { isVisible } from "./visibility";
 
 const CAPTCHA_SELECTORS = [
@@ -116,6 +117,7 @@ export async function buildObservation(
     fields,
     dialogs: detectDialogs(doc),
     iframes: detectFrames(doc),
+    ...summarizeNavigation(doc),
     login_detected: loginDetected,
     captcha_detected: captchaDetected,
     dom_stable: ctx.domStable,

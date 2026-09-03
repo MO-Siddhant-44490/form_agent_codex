@@ -12,6 +12,7 @@ export { FieldMappingSchema, type FieldMapping } from "./FieldMapping";
 export { FieldMappingBatchSchema, type FieldMappingBatch } from "./FieldMappingBatch";
 export { FormFieldSchema, type FormField } from "./FormField";
 export { ModelCallMetadataSchema, type ModelCallMetadata } from "./ModelCallMetadata";
+export { NavigationControlSchema, type NavigationControl } from "./NavigationControl";
 export { PageObservationSchema, type PageObservation } from "./PageObservation";
 export { PolicyDecisionSchema, type PolicyDecision } from "./PolicyDecision";
 export { RunStateSchema, type RunState } from "./RunState";

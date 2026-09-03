@@ -26,7 +26,7 @@ function observation(fields: FormField[], overrides: Partial<PageObservation> = 
     url: "http://127.0.0.1:4173/basic-form/", origin: "http://127.0.0.1:4173",
     title: "t", page_fingerprint: "sha256:abc", observation_seq: 2,
     observed_at: new Date().toISOString(), classification: [{ label: "form", confidence: 0.9 }],
-    fields, dialogs: [], iframes: [],
+    fields, dialogs: [], iframes: [], navigation: [], step_label: null,
     login_detected: false, captcha_detected: false, dom_stable: true,
     ...overrides,
   };

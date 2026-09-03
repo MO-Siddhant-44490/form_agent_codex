@@ -198,3 +198,47 @@ class _PreAttached:
 
     def close(self):
         pass
+
+
+def test_multipage_fill_via_extension(fixture_server):
+    """Slice 5 multi-page in a real browser: the driver fills each page,
+    clicks Continue, re-perceives the revealed page, and stops before submit."""
+    from agent_backend.driver import run_fill
+
+    facts = [
+        f
+        for f in slice1_facts()
+        if f.key in {"full_name", "email", "date_of_birth", "country", "years_experience"}
+    ]
+    # country fact needs to match the option value "IN"
+    facts = [f.model_copy(update={"value": "IN"}) if f.key == "country" else f for f in facts]
+
+    assert EXTENSION_DIST.exists(), "build the extension first"
+    transport = ExtensionPlaywrightTransport(
+        EXTENSION_DIST, f"http://127.0.0.1:{FIXTURE_PORT}/multipage-form/"
+    )
+    try:
+        result = run_fill(transport, facts)
+        assert result.outcome is RunOutcome.COMPLETED, result.detail
+        assert len(result.filled_fields) == 5  # across 3 pages
+
+        # The last page is showing and nothing was submitted (invariant 1).
+        state = transport.page_eval(
+            """() => ({
+                page: window.__fixture.currentPage,
+                submissions: window.__fixture.submissions.length,
+                values: Object.fromEntries(
+                    new FormData(document.getElementById("application-form")).entries()),
+            })"""
+        )
+        assert state["page"] == 2  # navigated to the final page
+        assert state["submissions"] == 0
+        assert state["values"] == {
+            "full_name": "Ada Lovelace",
+            "email": "ada@example.test",
+            "date_of_birth": "1998-04-17",
+            "country": "IN",
+            "years_experience": "5",
+        }
+    finally:
+        transport.close()

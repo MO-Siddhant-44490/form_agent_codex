@@ -1,0 +1,10 @@
+{
+  "fixture_id": "multipage-form",
+  "url_path": "/multipage-form/",
+  "description": "3-page form; each page but the last has a Continue button. Only the visible page's fields are actionable.",
+  "pages": 3,
+  "expected_fill": {
+    "full_name": "Ada Lovelace", "email": "ada@example.test",
+    "date_of_birth": "1998-04-17", "country": "IN", "years_experience": "5"
+  }
+}

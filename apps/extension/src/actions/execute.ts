@@ -37,6 +37,7 @@ export function executeAction(doc: Document, action: BrowserAction): ActionResul
     case "CLICK":
     case "DISMISS_DIALOG":
     case "SUBMIT":
+    case "NAVIGATE_NEXT":
       return executeTargeted(doc, action);
     case "SCROLL": {
       doc.defaultView?.scrollBy({ top: doc.defaultView.innerHeight * 0.8 });
@@ -47,8 +48,7 @@ export function executeAction(doc: Document, action: BrowserAction): ActionResul
       // this returns; by the time we are here the DOM was quiet.
       return result(action, "EXECUTED");
     case "UPLOAD_FILE":
-    case "NAVIGATE_NEXT":
-      // Not yet implemented (Slice 5): reject loudly, never skip silently.
+      // Not yet implemented (later Slice 5 chunk): reject loudly.
       return result(action, "REJECTED", {
         rejection_reason: "unsupported",
         error: `${action.kind} is not supported in this build`,
