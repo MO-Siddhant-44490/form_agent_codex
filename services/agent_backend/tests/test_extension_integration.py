@@ -336,3 +336,27 @@ def test_file_upload_via_extension(fixture_server):
         assert uploaded["size"] == len(b"%PDF-1.7 real resume bytes")  # real bytes attached
     finally:
         transport.close()
+
+
+def test_datepicker_fill_via_extension(fixture_server):
+    """Slice 5 custom date picker in a real browser: the executor opens the
+    calendar and clicks the day cell matching the date-of-birth fact."""
+    from agent_backend.driver import run_fill
+
+    facts = [f for f in slice1_facts() if f.key in {"full_name", "date_of_birth"}]
+    assert EXTENSION_DIST.exists(), "build the extension first"
+    transport = ExtensionPlaywrightTransport(
+        EXTENSION_DIST, f"http://127.0.0.1:{FIXTURE_PORT}/datepicker-form/"
+    )
+    try:
+        result = run_fill(transport, facts)
+        assert result.outcome is RunOutcome.COMPLETED, result.detail
+        assert len(result.filled_fields) == 2
+
+        values = transport.page_eval(
+            "() => Object.fromEntries(new FormData(document.getElementById('application-form')).entries())"
+        )
+        assert values["full_name"] == "Ada Lovelace"
+        assert values["date_of_birth"] == "1998-04-17"  # picked from the calendar
+    finally:
+        transport.close()

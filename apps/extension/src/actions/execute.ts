@@ -2,7 +2,7 @@
 // action to the live DOM. No model output executes directly (invariant 5);
 // every mutation goes through framework-compatible native events.
 import type { ActionResult, BrowserAction } from "@form-agent/contracts";
-import { detectComboboxes } from "../perception/widgets";
+import { detectComboboxes, detectDatePickers, findDateCell } from "../perception/widgets";
 import { deepQueryAll } from "../perception/shadow";
 import { elWindow, isFormControl, isInputEl, isSelectEl } from "./dom-types";
 import { fireInputEvents, focusThen, setNativeValue } from "./events";
@@ -60,8 +60,12 @@ function executeTargeted(doc: Document, action: BrowserAction): ActionResult {
 
   // Custom ARIA combobox: open the popup and click the matching option,
   // rather than treating it as a native <select>.
-  if (action.kind === "SELECT_OPTION" && action.target.role === "combobox") {
+  if (action.kind === "SELECT_OPTION" && action.target.input_type === "combobox") {
     return executeCombobox(doc, action);
+  }
+  // Custom calendar date picker: open it and click the matching day cell.
+  if (action.kind === "SET_DATE" && action.target.role === "datepicker") {
+    return executeDatePicker(doc, action);
   }
 
   const resolved = resolveTarget(doc, action.target);
@@ -148,6 +152,29 @@ function executeUpload(doc: Document, action: BrowserAction): ActionResult {
   el.files = dt.files;
   el.dispatchEvent(new win.Event("input", { bubbles: true }));
   el.dispatchEvent(new win.Event("change", { bubbles: true }));
+  return result(action, "EXECUTED");
+}
+
+function executeDatePicker(doc: Document, action: BrowserAction): ActionResult {
+  const value = action.resolved_value;
+  if (value === null || value === undefined) return failed(action, "no resolved value");
+  const pickers = detectDatePickers(doc);
+  const picker = pickers.find((p) => p.element.id === action.target!.field_id) ?? pickers[0];
+  if (!picker) return failed(action, "date picker not found");
+
+  const el = picker.element;
+  const win = elWindow(el);
+  el.dispatchEvent(new win.FocusEvent("focus", { bubbles: false }));
+  if (typeof el.focus === "function") el.focus();
+  el.click();
+  el.setAttribute("aria-expanded", "true");
+
+  const fresh = detectDatePickers(doc).find((p) => p.element === el) ?? picker;
+  const grid = fresh.grid;
+  if (!grid) return failed(action, "date picker has no calendar grid");
+  const cell = findDateCell(grid, value);
+  if (!cell) return failed(action, `no calendar cell for ${value} (month navigation needed)`);
+  cell.click();
   return result(action, "EXECUTED");
 }
 

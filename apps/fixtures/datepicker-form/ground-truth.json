@@ -1,0 +1,3 @@
+{ "fixture_id": "datepicker-form", "url_path": "/datepicker-form/",
+  "description": "Custom calendar date picker (April 1998); the agent opens it and clicks the target day.",
+  "expected_fill": { "full_name": "Ada Lovelace", "date_of_birth": "1998-04-17" } }

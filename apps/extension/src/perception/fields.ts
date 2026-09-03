@@ -4,7 +4,7 @@
 import type { FormField, TargetDescriptor } from "@form-agent/contracts";
 import { accessibleName, computedRole, explicitLabel, groupLegend } from "./labels";
 import { deepQueryAll } from "./shadow";
-import { detectComboboxes } from "./widgets";
+import { detectComboboxes, detectDatePickers } from "./widgets";
 import { hasLayout, isVisible } from "./visibility";
 
 type Control = HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
@@ -158,6 +158,7 @@ export function discoverFields(doc: Document): FormField[] {
   });
 
   mergeComboboxes(doc, fields);
+  mergeDatePickers(doc, fields);
   return fields;
 }
 
@@ -206,6 +207,44 @@ function mergeComboboxes(doc: Document, fields: FormField[]): void {
         options,
         validation_message: null,
         nearby_text: groupLegend(el),
+      });
+    }
+  }
+}
+
+// Enrich a custom date picker so it maps to a date fact and routes to the
+// calendar-popup executor path.
+function mergeDatePickers(doc: Document, fields: FormField[]): void {
+  for (const picker of detectDatePickers(doc)) {
+    const el = picker.element;
+    const id = el.id || `datepicker-${fields.length}`;
+    const nameAttr = el.getAttribute("data-value-input") ?? ((el as HTMLInputElement).name || null);
+    const existing = el.id ? fields.find((f) => f.field_id === el.id) : undefined;
+    if (existing) {
+      existing.input_type = "date";
+      existing.current_value = picker.currentValue;
+      existing.readonly = false; // fillable via the calendar, not by typing
+      existing.options = null; // a date picker is not an enumerated select
+      existing.target = {
+        ...existing.target,
+        role: "datepicker",
+        input_type: "date",
+        name_attr: nameAttr ?? existing.target.name_attr,
+      };
+    } else {
+      fields.push({
+        field_id: id,
+        target: {
+          field_id: id, role: "datepicker", accessible_name: accessibleName(el),
+          input_type: "date", label: explicitLabel(el), name_attr: nameAttr,
+          autocomplete: null, placeholder: el.getAttribute("placeholder"),
+          bounding_box: boundingBox(el),
+        },
+        input_type: "date", label: explicitLabel(el), accessible_name: accessibleName(el),
+        required: el.getAttribute("aria-required") === "true",
+        disabled: false, readonly: false, visible: true, checked: null,
+        current_value: picker.currentValue, value_redacted: false, options: null,
+        validation_message: null, nearby_text: groupLegend(el),
       });
     }
   }

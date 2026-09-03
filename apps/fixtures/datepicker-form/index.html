@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Date Picker Form — Fixture</title>
+<style>body{font-family:system-ui;max-width:560px;margin:2rem auto;padding:0 1rem}
+label{display:block;margin-top:1rem;font-weight:600}input{padding:.4rem;width:260px}
+[role=grid]{border:1px solid #ccc;padding:.5rem;display:grid;grid-template-columns:repeat(7,1fr);gap:2px;width:260px}
+[role=grid][hidden]{display:none}[role=gridcell]{padding:.3rem;cursor:pointer;border:1px solid #eee}</style>
+</head>
+<body>
+<h1>Application</h1>
+<form id="application-form">
+  <label for="name">Full name</label>
+  <input id="name" name="full_name" type="text" required style="display:block;margin-top:.25rem">
+
+  <label for="dob">Date of birth</label>
+  <div class="datepicker" data-datepicker>
+    <input id="dob" role="combobox" aria-haspopup="grid" aria-controls="cal"
+           aria-expanded="false" data-value-input="date_of_birth" readonly placeholder="Pick a date">
+    <input type="hidden" name="date_of_birth" value="">
+    <div id="cal" role="grid" hidden></div>
+  </div>
+</form>
+<script>
+  const input = document.getElementById("dob");
+  const cal = document.getElementById("cal");
+  const hidden = document.querySelector('input[name="date_of_birth"]');
+  // Render April 1998 (the target month) with data-date cells.
+  for (let d = 1; d <= 30; d++) {
+    const iso = `1998-04-${String(d).padStart(2,"0")}`;
+    const cell = document.createElement("button");
+    cell.type = "button"; cell.setAttribute("role","gridcell");
+    cell.dataset.date = iso; cell.setAttribute("aria-label", `April ${d}, 1998`);
+    cell.textContent = String(d);
+    cal.appendChild(cell);
+  }
+  function open(){ cal.hidden=false; input.setAttribute("aria-expanded","true"); }
+  function close(){ cal.hidden=true; input.setAttribute("aria-expanded","false"); }
+  input.addEventListener("focus", open); input.addEventListener("click", open);
+  cal.addEventListener("click", (e) => {
+    const cell = e.target.closest("[role=gridcell]"); if(!cell) return;
+    hidden.value = cell.dataset.date; input.value = cell.dataset.date;
+    input.dispatchEvent(new Event("change",{bubbles:true})); close();
+  });
+  window.__fixture = { id:"datepicker-form", submissions:[] };
+</script>
+</body></html>
