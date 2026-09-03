@@ -21,6 +21,7 @@ filterwarnings = [
   # PyMuPDF's SWIG bindings on Python 3.12; harmless and not ours to fix.
   "ignore:builtin type .* has no __module__ attribute:DeprecationWarning",
 ]
+log_cli_level = "ERROR"
 
 [tool.ruff]
 line-length = 100

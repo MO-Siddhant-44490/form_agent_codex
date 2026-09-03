@@ -124,3 +124,77 @@ def test_model_assisted_fill_on_tricky_form_via_extension(fixture_server):
         }
     finally:
         transport.close()
+
+
+def test_langgraph_fill_and_submit_via_extension(fixture_server):
+    """Slice 4 in a real browser: the durable graph fills the fixture form,
+    pauses for submission approval, and submits only after an explicit token
+    (fixture-local). Extension enforces the submission lock throughout."""
+    from datetime import UTC, datetime, timedelta
+
+    from agent_backend.orchestration.graph import build_form_fill_graph
+    from agent_backend.orchestration.runner import resume_run, start_run
+    from form_contracts import ApprovalToken, RunOutcome, TargetDescriptor
+
+    assert EXTENSION_DIST.exists(), "build the extension first"
+    transport = ExtensionPlaywrightTransport(EXTENSION_DIST, FIXTURE_URL)
+    # Fixture mode lets the controlled form accept a token-backed submit.
+    try:
+        session = transport.attach()
+        transport._worker.evaluate("() => globalThis.__formAgentTest.setFixtureMode(true)")
+
+        graph = build_form_fill_graph(_PreAttached(transport, session))
+        handle = start_run(
+            graph,
+            session.run_id,
+            slice1_facts(),
+            goal="fill_and_submit",
+            submit_target=TargetDescriptor(
+                field_id="submit-btn", role="button", input_type="submit"
+            ),
+        )
+        assert handle.interrupt["reason"] == "submission_approval"
+        submissions = transport.page_eval("() => window.__fixture.submissions.length")
+        assert submissions == 0  # paused before submit
+
+        token = ApprovalToken(
+            token_id="tok-graph",
+            run_id=session.run_id,
+            origin=session.origin,
+            issued_at=datetime.now(UTC),
+            expires_at=datetime.now(UTC) + timedelta(minutes=5),
+        )
+        transport._worker.evaluate(
+            "(t) => globalThis.__formAgentTest.grantApproval(t)", token.model_dump(mode="json")
+        )
+        resumed = resume_run(
+            graph,
+            session.run_id,
+            {"approved": True, "token": token.model_dump(mode="json")},
+        )
+        assert resumed.state["outcome"] == RunOutcome.COMPLETED.value
+        assert resumed.state["submitted"] is True
+        assert transport.page_eval("() => window.__fixture.submissions.length") == 1
+    finally:
+        transport.close()
+
+
+class _PreAttached:
+    """Transport wrapper that reuses an already-attached extension session so
+    the graph's attach node does not re-launch the browser."""
+
+    def __init__(self, inner, session):
+        self._inner = inner
+        self._session = session
+
+    def attach(self):
+        return self._session
+
+    def observe(self):
+        return self._inner.observe()
+
+    def execute(self, action):
+        return self._inner.execute(action)
+
+    def close(self):
+        pass

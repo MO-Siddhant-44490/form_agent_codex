@@ -11,6 +11,7 @@ from form_contracts import (
     ActionKind,
     ActionResult,
     ActionResultStatus,
+    ApprovalToken,
     BrowserAction,
     FailureClass,
     FormField,
@@ -75,6 +76,11 @@ def basic_form_fields() -> list[FakeField]:
     ]
 
 
+class TransportCrash(RuntimeError):
+    """Simulated backend crash AFTER the browser applied the effect and
+    recorded idempotency (the extension outlives a backend crash)."""
+
+
 @dataclass
 class FakeTransport:
     fields: list[FakeField] = dc_field(default_factory=basic_form_fields)
@@ -84,6 +90,16 @@ class FakeTransport:
     executed_keys: dict[str, ActionResult] = dc_field(default_factory=dict)
     received_kinds: list[ActionKind] = dc_field(default_factory=list)
     closed: bool = False
+    # Slice 4 additions: fixture-mode submission with real approval checks,
+    # crash injection, and per-field effect counting for idempotency proofs.
+    allow_submit: bool = False
+    approvals: dict[str, ApprovalToken] = dc_field(default_factory=dict)
+    submissions: list[str] = dc_field(default_factory=list)
+    crash_after_fields: set[str] = dc_field(default_factory=set)
+    execution_counts: dict[str, int] = dc_field(default_factory=dict)
+
+    def grant_approval(self, token: ApprovalToken) -> None:
+        self.approvals[token.token_id] = token
 
     def attach(self) -> TabSession:
         return TabSession(
@@ -154,10 +170,12 @@ class FakeTransport:
     def execute(self, action: BrowserAction) -> ExecuteOutcome:
         self.received_kinds.append(action.kind)
 
-        # SUBMIT must never reach a transport in Slice 1 (invariant 1); a
-        # fake this strict makes any driver regression loud.
+        # Without fixture mode, SUBMIT must never reach the transport
+        # (invariant 1); a fake this strict makes any driver regression loud.
         if action.kind is ActionKind.SUBMIT:
-            raise AssertionError("driver proposed SUBMIT: invariant 1 violation")
+            if not self.allow_submit:
+                raise AssertionError("driver proposed SUBMIT: invariant 1 violation")
+            return self._execute_submit(action)
 
         if action.idempotency_key and action.idempotency_key in self.executed_keys:
             prior = self.executed_keys[action.idempotency_key]
@@ -211,9 +229,49 @@ class FakeTransport:
         result = self._result(action, ActionResultStatus.EXECUTED)
         if action.idempotency_key:
             self.executed_keys[action.idempotency_key] = result
+        self.execution_counts[target.field_id] = self.execution_counts.get(target.field_id, 0) + 1
+        if target.field_id in self.crash_after_fields:
+            self.crash_after_fields.discard(target.field_id)
+            raise TransportCrash(f"backend crashed after executing on {target.field_id}")
 
         observation = self.observe()
         verification = self._verify(action, target, observation)
+        return ExecuteOutcome(result=result, verification=verification, observation=observation)
+
+    def _execute_submit(self, action: BrowserAction) -> ExecuteOutcome:
+        token = self.approvals.get(action.approval_token_id or "")
+        valid = (
+            token is not None
+            and not token.used
+            and token.expires_at > datetime.now(UTC)
+            and token.origin == ORIGIN
+            and token.run_id == action.run_id
+        )
+        if not valid:
+            return ExecuteOutcome(
+                result=self._result(
+                    action,
+                    ActionResultStatus.REJECTED,
+                    RejectionReason.MISSING_APPROVAL,
+                    "no valid approval token",
+                ),
+                verification=None,
+                observation=None,
+            )
+        self.approvals[token.token_id] = token.model_copy(update={"used": True})
+        self.submissions.append(action.action_id)
+        self.last_action_seq = action.sequence_number
+        result = self._result(action, ActionResultStatus.EXECUTED)
+        observation = self.observe()
+        verification = VerificationResult(
+            action_id=action.action_id,
+            status=VerificationStatus.SUCCESS,
+            evidence=VerificationEvidence(
+                page_fingerprint=observation.page_fingerprint,
+                notes="fixture submission recorded locally",
+            ),
+            recommended_transition=RecommendedTransition.CONTINUE,
+        )
         return ExecuteOutcome(result=result, verification=verification, observation=observation)
 
     def _verify(
