@@ -45,7 +45,7 @@ function setDob(expectedValue: string): BrowserAction {
       field_value: expectedValue, checked: null, selected_option: null, validation_error: false,
       dialog_dismissed: null, navigation_expected: null, expected_url_prefix: null,
     },
-    risk: "low", idempotency_key: "k", source_observation_seq: 1, approval_token_id: null,
+    risk: "low", idempotency_key: "k", source_observation_seq: 1, approval_token_id: null, upload_file: null,
   };
 }
 
@@ -109,7 +109,7 @@ describe("verifyAction", () => {
       ...setDob("unused"),
       kind: "SUBMIT",
       resolved_value: null,
-      approval_token_id: "tok-1",
+      approval_token_id: "tok-1", upload_file: null,
       expected_effect: {
         field_value: null, checked: null, selected_option: null, validation_error: null,
         dialog_dismissed: null, navigation_expected: true,

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Upload Form — Fixture</title>
+<style>body{font-family:system-ui;max-width:560px;margin:2rem auto;padding:0 1rem}
+label{display:block;margin-top:1rem;font-weight:600}input{display:block;margin-top:.25rem;padding:.4rem}</style>
+</head>
+<body>
+<h1>Application with attachment</h1>
+<form id="application-form">
+  <label for="name">Full name</label>
+  <input id="name" name="full_name" type="text" required style="width:320px">
+  <label for="resume">Upload resume (PDF)</label>
+  <input id="resume" name="resume" type="file" accept="application/pdf,text/plain" required>
+  <p id="fileinfo"></p>
+</form>
+<script>
+  const input = document.getElementById("resume");
+  input.addEventListener("change", () => {
+    const f = input.files[0];
+    document.getElementById("fileinfo").textContent = f ? `${f.name} (${f.size} bytes)` : "";
+  });
+  window.__fixture = { id:"upload-form", submissions:[],
+    get uploaded(){ const f=input.files[0]; return f ? {name:f.name, size:f.size, type:f.type} : null; } };
+</script>
+</body></html>

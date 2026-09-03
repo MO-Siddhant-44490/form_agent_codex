@@ -37,7 +37,7 @@ function action(overrides: Partial<BrowserAction> = {}): BrowserAction {
     risk: "low",
     idempotency_key: "run-1:full-name:Ada",
     source_observation_seq: 3,
-    approval_token_id: null,
+    approval_token_id: null, upload_file: null,
     ...overrides,
   };
 }
@@ -90,7 +90,7 @@ describe("submission lock (invariant 1)", () => {
   const submit = (overrides: Partial<BrowserAction> = {}) =>
     action({
       kind: "SUBMIT",
-      approval_token_id: "tok-1",
+      approval_token_id: "tok-1", upload_file: null,
       idempotency_key: "run-1:submit",
       expected_effect: {
         field_value: null, checked: null, selected_option: null, validation_error: null,
@@ -100,7 +100,7 @@ describe("submission lock (invariant 1)", () => {
     });
 
   it("rejects SUBMIT without any token", () => {
-    expect(checkAction(session, freshRecords(), submit({ approval_token_id: null })))
+    expect(checkAction(session, freshRecords(), submit({ approval_token_id: null, upload_file: null })))
       .toMatchObject({ allowed: false, reason: "missing_approval" });
   });
 
@@ -142,7 +142,7 @@ describe("submission lock (invariant 1)", () => {
 
   it("fixture mode permits SUBMIT without a token (controlled fixtures only)", () => {
     const fixtureSession = { ...session, fixtureMode: true };
-    expect(checkAction(fixtureSession, freshRecords(), submit({ approval_token_id: null })))
+    expect(checkAction(fixtureSession, freshRecords(), submit({ approval_token_id: null, upload_file: null })))
       .toEqual({ allowed: true });
   });
 });

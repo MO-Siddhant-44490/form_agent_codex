@@ -10,6 +10,7 @@ from .actions import (
     BrowserAction,
     ExpectedEffect,
     RejectionReason,
+    UploadFileRef,
 )
 from .common import (
     PROTOCOL_VERSION,
@@ -129,6 +130,7 @@ __all__ = [  # noqa: RUF022 - grouped by module
     "ActionResult",
     "ActionResultStatus",
     "RejectionReason",
+    "UploadFileRef",
     "VerificationStatus",
     "FailureClass",
     "RecommendedTransition",

@@ -22,7 +22,6 @@ VALUE_KINDS = frozenset(
         ActionKind.SELECT_OPTION,
         ActionKind.SET_CHECKBOX,
         ActionKind.SET_RADIO,
-        ActionKind.UPLOAD_FILE,
     }
 )
 
@@ -59,6 +58,18 @@ def check_action(
 
     if kind is ActionKind.SUBMIT and not action.approval_token_id:
         return _block(action, PolicyRule.SUBMIT_WITHOUT_APPROVAL, "no approval token")
+
+    if kind is ActionKind.UPLOAD_FILE:
+        field = _find_field(observation, action)
+        if field is None:
+            return _block(action, PolicyRule.UNKNOWN_TARGET, "file field not in observation")
+        if not field.visible:
+            return _block(action, PolicyRule.HIDDEN_FIELD, f"{field.field_id} not visible")
+        if action.upload_file is None:
+            return _block(
+                action, PolicyRule.VALUE_WITHOUT_PROVENANCE, "UPLOAD_FILE has no file reference"
+            )
+        return PolicyDecision(action_id=action.action_id, decision=PolicyDecisionKind.ALLOW)
 
     if kind in VALUE_KINDS:
         field = _find_field(observation, action)

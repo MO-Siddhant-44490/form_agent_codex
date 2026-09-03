@@ -22,6 +22,7 @@ from form_contracts import (
     RiskLevel,
     RunOutcome,
     TabSession,
+    UploadFileRef,
     UserQuestion,
     VerificationResult,
     VerificationStatus,
@@ -110,6 +111,42 @@ def _dismiss_action(
     )
 
 
+def _upload_action(
+    field,
+    session: TabSession,
+    upload: UploadFileRef,
+    observation: PageObservation,
+    sequence_number: int,
+) -> BrowserAction:
+    return BrowserAction(
+        action_id=f"{session.run_id}:upload-{sequence_number}",
+        run_id=session.run_id,
+        tab_id=session.tab_id,
+        origin=session.origin,
+        sequence_number=sequence_number,
+        kind=ActionKind.UPLOAD_FILE,
+        target=field.target,
+        upload_file=upload,
+        expected_effect=ExpectedEffect(field_value=upload.filename),
+        risk=RiskLevel.MEDIUM,
+        idempotency_key=f"{session.run_id}:{field.field_id}:{upload.filename}",
+        source_observation_seq=observation.observation_seq,
+    )
+
+
+def _pending_upload(observation, uploads, uploaded_fields, blocked_fields):
+    """Next file field with an available upload, not yet done."""
+    for field in observation.fields:
+        if field.input_type != "file" or field.field_id in uploaded_fields:
+            continue
+        if field.field_id in blocked_fields:
+            continue
+        key = field.target.name_attr
+        if key and key in uploads and field.current_value != uploads[key].filename:
+            return field, uploads[key]
+    return None
+
+
 def _helper_action(
     observation: PageObservation,
     session: TabSession,
@@ -134,6 +171,7 @@ def run_fill(
     facts: list[DocumentFact],
     budgets: DriverBudgets | None = None,
     mapper: Mapper | None = None,
+    uploads: dict[str, UploadFileRef] | None = None,
 ) -> DriveResult:
     """Fill every approved-mappable field on the attached page, verifying
     each action. Never submits (invariant 1)."""
@@ -149,6 +187,8 @@ def run_fill(
     blocked_fields: set[str] = set()
     visited_pages: set[str] = set()
     dialogs_tried: dict[str, int] = {}
+    uploaded_fields: set[str] = set()
+    uploads = uploads or {}
     recovery = RecoveryPlanner()
     mapping: MappingOutcome | None = None
     mapped_fingerprint: str | None = None
@@ -205,6 +245,56 @@ def run_fill(
                 break
 
         if next_assignment is None:
+            # Attach any pending file uploads before deciding the page is done.
+            pending = _pending_upload(observation, uploads, uploaded_fields, blocked_fields)
+            if pending is not None:
+                upload_field, upload_ref = pending
+                sequence += 1
+                upload_action = _upload_action(
+                    upload_field, session, upload_ref, observation, sequence
+                )
+                decision = check_action(upload_action, observation, {})
+                result.policy_decisions.append(decision)
+                if decision.decision is PolicyDecisionKind.BLOCK:
+                    blocked_fields.add(upload_field.field_id)
+                    continue
+                up_outcome = transport.execute(upload_action)
+                result.steps_used += 1
+                if up_outcome.result.status == "EXECUTED":
+                    uploaded_fields.add(upload_field.field_id)
+                    if (
+                        up_outcome.verification
+                        and up_outcome.verification.status.value == "SUCCESS"
+                    ):
+                        result.filled_fields.append(upload_field.field_id)
+                        result.verifications.append(up_outcome.verification)
+                    # A file field we uploaded is no longer a missing-fact question.
+                    result.questions = [
+                        q for q in result.questions if q.field_id != upload_field.field_id
+                    ]
+                observation = up_outcome.observation or transport.observe()
+                continue
+
+            # Required file fields with no available upload need the user
+            # (the mapper does not map file inputs to text facts).
+            for f in observation.fields:
+                if (
+                    f.input_type == "file"
+                    and f.required
+                    and f.field_id not in uploaded_fields
+                    and f.field_id not in blocked_fields
+                ):
+                    blocked_fields.add(f.field_id)
+                    if all(q.field_id != f.field_id for q in result.questions):
+                        result.questions.append(
+                            UserQuestion(
+                                question_id=f"q-upload-{f.field_id}",
+                                kind=QuestionKind.MISSING_FACT,
+                                prompt=f"No file provided for {f.label or f.field_id}",
+                                field_id=f.field_id,
+                            )
+                        )
+
             # Current page is fully filled. Advance to the next page if the
             # form exposes a "next" control; otherwise this is the final page.
             visited_pages.add(observation.page_fingerprint)

@@ -304,3 +304,35 @@ def test_dialog_dismiss_then_fill_via_extension(fixture_server):
         assert state["values"] == {"full_name": "Ada Lovelace", "email": "ada@example.test"}
     finally:
         transport.close()
+
+
+def test_file_upload_via_extension(fixture_server):
+    """Slice 5 file upload in a real browser: the executor attaches a document
+    to a file input via DataTransfer."""
+    import base64
+
+    from agent_backend.driver import run_fill
+    from form_contracts import UploadFileRef
+
+    facts = [f for f in slice1_facts() if f.key == "full_name"]
+    upload = UploadFileRef(
+        filename="resume.pdf",
+        mime_type="application/pdf",
+        content_base64=base64.b64encode(b"%PDF-1.7 real resume bytes").decode(),
+    )
+    assert EXTENSION_DIST.exists(), "build the extension first"
+    transport = ExtensionPlaywrightTransport(
+        EXTENSION_DIST, f"http://127.0.0.1:{FIXTURE_PORT}/upload-form/"
+    )
+    try:
+        result = run_fill(transport, facts, uploads={"resume": upload})
+        assert result.outcome is RunOutcome.COMPLETED, result.detail
+        assert "resume" in result.filled_fields
+
+        uploaded = transport.page_eval("() => window.__fixture.uploaded")
+        assert uploaded is not None
+        assert uploaded["name"] == "resume.pdf"
+        assert uploaded["type"] == "application/pdf"
+        assert uploaded["size"] == len(b"%PDF-1.7 real resume bytes")  # real bytes attached
+    finally:
+        transport.close()

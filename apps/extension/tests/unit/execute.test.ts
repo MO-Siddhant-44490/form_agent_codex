@@ -17,7 +17,7 @@ function action(overrides: Partial<BrowserAction>): BrowserAction {
       field_value: null, checked: null, selected_option: null, validation_error: null,
       dialog_dismissed: null, navigation_expected: null, expected_url_prefix: null,
     },
-    risk: "low", idempotency_key: "k-1", source_observation_seq: null, approval_token_id: null,
+    risk: "low", idempotency_key: "k-1", source_observation_seq: null, approval_token_id: null, upload_file: null,
     ...overrides,
   };
 }
@@ -116,10 +116,16 @@ describe("SET_CHECKBOX / SET_RADIO", () => {
   });
 });
 
-describe("unsupported kinds", () => {
-  it("rejects UPLOAD_FILE loudly instead of skipping silently", () => {
-    const result = executeAction(document, action({ kind: "UPLOAD_FILE" }));
-    expect(result.status).toBe("REJECTED");
-    expect(result.rejection_reason).toBe("unsupported");
+describe("UPLOAD_FILE", () => {
+  const uploadRef = { filename: "resume.txt", mime_type: "text/plain",
+    content_base64: btoa("hello resume"), document_id: null };
+
+  // The DataTransfer attach path is native to Chrome (jsdom lacks it) and is
+  // proven by the real-browser E2E; unit tests cover the guard paths.
+  it("fails when the target is not a file input", () => {
+    document.body.innerHTML = `<input id="f" type="text">`;
+    const result = executeAction(document, action({ kind: "UPLOAD_FILE", upload_file: uploadRef }));
+    expect(result.status).toBe("FAILED");
+    expect(result.error).toContain("not a file input");
   });
 });

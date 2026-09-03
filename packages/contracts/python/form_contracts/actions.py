@@ -56,6 +56,17 @@ class ExpectedEffect(StrictModel):
     expected_url_prefix: str | None = None
 
 
+class UploadFileRef(StrictModel):
+    """A file to attach to a file input. `content_base64` is the file bytes and
+    is treated as sensitive (redacted from traces). Provenance is the
+    user-provided document the bytes came from (invariant 11)."""
+
+    filename: str
+    mime_type: str
+    content_base64: str
+    document_id: str | None = None  # source document, when known
+
+
 class BrowserAction(StrictModel):
     action_id: str
     run_id: str
@@ -78,6 +89,8 @@ class BrowserAction(StrictModel):
     source_observation_seq: int | None = None
     # Required for SUBMIT (invariant 1).
     approval_token_id: str | None = None
+    # Required for UPLOAD_FILE: the file to attach.
+    upload_file: "UploadFileRef | None" = None
 
     _origin_ok = field_validator("origin")(validate_origin)
 

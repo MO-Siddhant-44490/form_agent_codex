@@ -247,6 +247,37 @@ class FakeTransport:
         if action.kind is ActionKind.NAVIGATE_NEXT:
             return self._execute_navigate(action)
 
+        if action.kind is ActionKind.UPLOAD_FILE:
+            target = next(
+                (
+                    f
+                    for f in self._active_fields()
+                    if action.target and f.field_id == action.target.field_id
+                ),
+                None,
+            )
+            if target is None or action.upload_file is None:
+                return ExecuteOutcome(
+                    result=self._result(action, ActionResultStatus.FAILED, error="no file target"),
+                    verification=None,
+                    observation=None,
+                )
+            target.value = action.upload_file.filename
+            self.last_action_seq = action.sequence_number
+            obs = self.observe()
+            return ExecuteOutcome(
+                result=self._result(action, ActionResultStatus.EXECUTED),
+                verification=VerificationResult(
+                    action_id=action.action_id,
+                    status=VerificationStatus.SUCCESS,
+                    evidence=VerificationEvidence(
+                        observed_value=target.value, page_fingerprint=obs.page_fingerprint
+                    ),
+                    recommended_transition=RecommendedTransition.CONTINUE,
+                ),
+                observation=obs,
+            )
+
         if action.kind is ActionKind.DISMISS_DIALOG:
             self.dialog_present = False
             self.dialog_dismissed_count += 1

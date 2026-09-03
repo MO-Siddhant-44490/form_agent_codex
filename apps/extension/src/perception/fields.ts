@@ -93,6 +93,13 @@ function currentValue(el: Control): string | null {
   if (el instanceof HTMLInputElement && (el.type === "checkbox" || el.type === "radio")) {
     return null; // represented by `checked`
   }
+  if (el instanceof HTMLInputElement && el.type === "file") {
+    // Report the selected file's name (not the fake C:\\fakepath prefix).
+    const name = el.files?.[0]?.name;
+    if (name) return name;
+    const raw = el.value;
+    return raw ? raw.split(/[\\/]/).pop() ?? raw : null;
+  }
   return el.value === "" ? null : el.value;
 }
 

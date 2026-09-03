@@ -239,6 +239,43 @@
       ],
       "title": "TargetDescriptor",
       "type": "object"
+    },
+    "UploadFileRef": {
+      "additionalProperties": false,
+      "description": "A file to attach to a file input. `content_base64` is the file bytes and\nis treated as sensitive (redacted from traces). Provenance is the\nuser-provided document the bytes came from (invariant 11).",
+      "properties": {
+        "content_base64": {
+          "title": "Content Base64",
+          "type": "string"
+        },
+        "document_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Document Id"
+        },
+        "filename": {
+          "title": "Filename",
+          "type": "string"
+        },
+        "mime_type": {
+          "title": "Mime Type",
+          "type": "string"
+        }
+      },
+      "required": [
+        "filename",
+        "mime_type",
+        "content_base64"
+      ],
+      "title": "UploadFileRef",
+      "type": "object"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -335,6 +372,17 @@
       "anyOf": [
         {
           "$ref": "#/$defs/TargetDescriptor"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "upload_file": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/UploadFileRef"
         },
         {
           "type": "null"

@@ -30,7 +30,7 @@ async function fill(fieldId: string, name: string, value: string, seq: number, o
     value_ref: "fact://x", resolved_value: value,
     expected_effect: { field_value: value, checked: null, selected_option: null, validation_error: false,
       dialog_dismissed: null, navigation_expected: null, expected_url_prefix: null },
-    risk: "low", idempotency_key: `k-${fieldId}`, source_observation_seq: obsSeq, approval_token_id: null,
+    risk: "low", idempotency_key: `k-${fieldId}`, source_observation_seq: obsSeq, approval_token_id: null, upload_file: null,
   };
   return serviceWorker.evaluate((a) => globalThis.__formAgentTest.execute(a) as Promise<Outcome>, action) as Promise<Outcome>;
 }

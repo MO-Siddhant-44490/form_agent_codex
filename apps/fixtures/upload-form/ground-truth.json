@@ -1,0 +1,4 @@
+{ "fixture_id": "upload-form", "url_path": "/upload-form/",
+  "description": "Form with a required file input; the agent attaches a document.",
+  "expected_fill": { "full_name": "Ada Lovelace" },
+  "expected_upload": { "name": "resume.pdf", "type": "application/pdf" } }

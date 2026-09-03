@@ -51,11 +51,7 @@ export function executeAction(doc: Document, action: BrowserAction): ActionResul
       // this returns; by the time we are here the DOM was quiet.
       return result(action, "EXECUTED");
     case "UPLOAD_FILE":
-      // Not yet implemented (later Slice 5 chunk): reject loudly.
-      return result(action, "REJECTED", {
-        rejection_reason: "unsupported",
-        error: `${action.kind} is not supported in this build`,
-      });
+      return executeUpload(doc, action);
   }
 }
 
@@ -121,6 +117,37 @@ function executeTargeted(doc: Document, action: BrowserAction): ActionResult {
   // CLICK / DISMISS_DIALOG / SUBMIT: a real click on the resolved element.
   if (resolved.kind !== "element") return failed(action, "click needs a single element");
   (resolved.element as HTMLElement).click();
+  return result(action, "EXECUTED");
+}
+
+function executeUpload(doc: Document, action: BrowserAction): ActionResult {
+  if (!action.target) return failed(action, "action has no target");
+  const upload = action.upload_file;
+  if (!upload) return failed(action, "UPLOAD_FILE has no file reference");
+  const resolved = resolveTarget(doc, action.target);
+  if (resolved.kind !== "element") return failed(action, "file input not found");
+  const el = resolved.element;
+  if (!isInputEl(el) || el.type !== "file") return failed(action, "target is not a file input");
+  if (el.disabled) return failed(action, "file input is disabled");
+
+  const win = elWindow(el);
+  // Decode base64 -> bytes in the element's realm and set the input's files via
+  // DataTransfer (the only content-script way to programmatically attach a file).
+  let buffer: ArrayBuffer;
+  try {
+    const binary = win.atob(upload.content_base64);
+    buffer = new ArrayBuffer(binary.length);
+    const view = new Uint8Array(buffer);
+    for (let i = 0; i < binary.length; i++) view[i] = binary.charCodeAt(i);
+  } catch {
+    return failed(action, "invalid base64 content");
+  }
+  const file = new win.File([buffer], upload.filename, { type: upload.mime_type });
+  const dt = new win.DataTransfer();
+  dt.items.add(file);
+  el.files = dt.files;
+  el.dispatchEvent(new win.Event("input", { bubbles: true }));
+  el.dispatchEvent(new win.Event("change", { bubbles: true }));
   return result(action, "EXECUTED");
 }
 
