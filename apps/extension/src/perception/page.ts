@@ -1,6 +1,7 @@
 // Page-level observation: classification signals, dialogs, frames,
 // fingerprinting (plan.md §8.2). Read-only; never mutates the page.
 import type { PageObservation } from "@form-agent/contracts";
+import { detectDialogs } from "./dialogs";
 import { discoverFields } from "./fields";
 import { summarizeNavigation } from "./navigation";
 import { isVisible } from "./visibility";
@@ -24,23 +25,6 @@ export function detectLogin(doc: Document): boolean {
 
 export function detectCaptcha(doc: Document): boolean {
   return doc.querySelector(CAPTCHA_SELECTORS) !== null;
-}
-
-function detectDialogs(doc: Document): PageObservation["dialogs"] {
-  const dialogs: NonNullable<PageObservation["dialogs"]> = [];
-  const candidates = doc.querySelectorAll<HTMLElement>('dialog[open], [role="dialog"]');
-  candidates.forEach((el, i) => {
-    if (el instanceof HTMLDialogElement && !el.open) return;
-    if (!(el instanceof HTMLDialogElement) && !isVisible(el)) return;
-    const idText = `${el.id} ${el.className}`.toLowerCase();
-    dialogs.push({
-      dialog_id: el.id || `dialog-${i}`,
-      kind: /cookie|consent/.test(idText) ? "cookie_banner" : "modal",
-      text_snippet: el.textContent?.trim().slice(0, 200) || null,
-      dismiss_target: null,
-    });
-  });
-  return dialogs;
 }
 
 function detectFrames(doc: Document): PageObservation["iframes"] {

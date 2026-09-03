@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Cookie Banner Form — Fixture</title>
+<style>body{font-family:system-ui;max-width:560px;margin:2rem auto;padding:0 1rem}
+label{display:block;margin-top:1rem;font-weight:600}input{display:block;padding:.4rem;width:320px}
+#cookie-banner{position:fixed;bottom:0;left:0;right:0;background:#222;color:#fff;padding:1rem;display:flex;gap:1rem;align-items:center}
+#cookie-banner button{padding:.4rem 1rem}</style>
+</head>
+<body>
+<h1>Application</h1>
+<form id="application-form">
+  <label for="name">Full name</label>
+  <input id="name" name="full_name" type="text" required>
+  <label for="email">Email address</label>
+  <input id="email" name="email" type="email" required>
+</form>
+
+<div id="cookie-banner">
+  <span>We use cookies to improve your experience.</span>
+  <button id="reject">Reject all</button>
+  <button id="accept">Accept all</button>
+</div>
+<script>
+  window.__fixture = { id:"dialog-form", submissions:[], permissionGranted:false };
+  const banner = document.getElementById("cookie-banner");
+  document.getElementById("accept").addEventListener("click", () => {
+    window.__fixture.permissionGranted = true;  // "accept all" grants tracking
+    banner.remove();
+  });
+  document.getElementById("reject").addEventListener("click", () => {
+    banner.remove();  // reject: dismissed WITHOUT granting
+  });
+</script>
+</body></html>

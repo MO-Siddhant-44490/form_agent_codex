@@ -89,6 +89,27 @@ def _navigation_action(
     )
 
 
+def _dismiss_action(
+    observation: PageObservation,
+    session: TabSession,
+    dialog,
+    sequence_number: int,
+) -> BrowserAction:
+    return BrowserAction(
+        action_id=f"{session.run_id}:dismiss-{sequence_number}",
+        run_id=session.run_id,
+        tab_id=session.tab_id,
+        origin=session.origin,
+        sequence_number=sequence_number,
+        kind=ActionKind.DISMISS_DIALOG,
+        target=dialog.dismiss_target,
+        expected_effect=ExpectedEffect(dialog_dismissed=True),
+        risk=RiskLevel.LOW,
+        idempotency_key=f"{session.run_id}:dismiss:{dialog.dialog_id}",
+        source_observation_seq=observation.observation_seq,
+    )
+
+
 def _helper_action(
     observation: PageObservation,
     session: TabSession,
@@ -127,6 +148,7 @@ def run_fill(
     retries: dict[str, int] = {}
     blocked_fields: set[str] = set()
     visited_pages: set[str] = set()
+    dialogs_tried: dict[str, int] = {}
     recovery = RecoveryPlanner()
     mapping: MappingOutcome | None = None
     mapped_fingerprint: str | None = None
@@ -136,6 +158,29 @@ def run_fill(
             result.outcome = RunOutcome.NEEDS_USER
             result.detail = "login or CAPTCHA present; human takeover required (invariant 2)"
             return result
+
+        # Dismiss a blocking dialog / cookie banner before interacting with
+        # the form. Bounded: each dialog is tried at most twice, then left
+        # alone so the run never loops on a persistent overlay.
+        dialog = next(
+            (
+                d
+                for d in observation.dialogs
+                if d.dismiss_target is not None and dialogs_tried.get(d.dialog_id, 0) < 2
+            ),
+            None,
+        )
+        if dialog is not None:
+            sequence += 1
+            dismiss = _dismiss_action(observation, session, dialog, sequence)
+            decision = check_action(dismiss, observation, {})
+            result.policy_decisions.append(decision)
+            dialogs_tried[dialog.dialog_id] = dialogs_tried.get(dialog.dialog_id, 0) + 1
+            if decision.decision is PolicyDecisionKind.ALLOW:
+                dismiss_outcome = transport.execute(dismiss)
+                result.steps_used += 1
+                observation = dismiss_outcome.observation or transport.observe()
+            continue
 
         # Re-map only when the page structure changed (fingerprints are
         # value-free, so filling fields does not trigger remapping).

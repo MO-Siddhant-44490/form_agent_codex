@@ -13,6 +13,8 @@ from form_contracts import (
     ActionResultStatus,
     ApprovalToken,
     BrowserAction,
+    DialogInfo,
+    DialogKind,
     FailureClass,
     FormField,
     NavigationControl,
@@ -106,6 +108,9 @@ class FakeTransport:
     # NAVIGATE_NEXT advances. Each page but the last exposes a NEXT control.
     pages: list[list[FakeField]] | None = None
     current_page: int = 0
+    # A blocking dialog present until DISMISS_DIALOG clears it.
+    dialog_present: bool = False
+    dialog_dismissed_count: int = 0
 
     def grant_approval(self, token: ApprovalToken) -> None:
         self.approvals[token.token_id] = token
@@ -142,6 +147,20 @@ class FakeTransport:
                 )
             )
         return controls
+
+    def _dialogs(self) -> list[DialogInfo]:
+        if not self.dialog_present:
+            return []
+        return [
+            DialogInfo(
+                dialog_id="cookie-banner",
+                kind=DialogKind.COOKIE_BANNER,
+                text_snippet="We use cookies",
+                dismiss_target=TargetDescriptor(
+                    field_id="cookie-accept", role="button", accessible_name="Accept"
+                ),
+            )
+        ]
 
     def attach(self) -> TabSession:
         return TabSession(
@@ -196,6 +215,7 @@ class FakeTransport:
             ],
             fields=[self._form_field(f) for f in active],
             navigation=self._navigation(),
+            dialogs=self._dialogs(),
             login_detected=self.login_page,
         )
 
@@ -226,6 +246,24 @@ class FakeTransport:
 
         if action.kind is ActionKind.NAVIGATE_NEXT:
             return self._execute_navigate(action)
+
+        if action.kind is ActionKind.DISMISS_DIALOG:
+            self.dialog_present = False
+            self.dialog_dismissed_count += 1
+            self.last_action_seq = action.sequence_number
+            obs = self.observe()
+            return ExecuteOutcome(
+                result=self._result(action, ActionResultStatus.EXECUTED),
+                verification=VerificationResult(
+                    action_id=action.action_id,
+                    status=VerificationStatus.SUCCESS,
+                    evidence=VerificationEvidence(
+                        page_fingerprint=obs.page_fingerprint, notes="dialog dismissed"
+                    ),
+                    recommended_transition=RecommendedTransition.CONTINUE,
+                ),
+                observation=obs,
+            )
 
         if action.idempotency_key and action.idempotency_key in self.executed_keys:
             prior = self.executed_keys[action.idempotency_key]

@@ -273,3 +273,34 @@ def test_combobox_fill_via_extension(fixture_server):
         assert values["country"] == "IN"  # the hidden input the combobox sets
     finally:
         transport.close()
+
+
+def test_dialog_dismiss_then_fill_via_extension(fixture_server):
+    """Slice 5 dialog dismissal in a real browser: the cookie banner is
+    dismissed (preferring Reject — no permission granted), then the form is
+    filled underneath."""
+    from agent_backend.driver import run_fill
+
+    facts = [f for f in slice1_facts() if f.key in {"full_name", "email"}]
+    assert EXTENSION_DIST.exists(), "build the extension first"
+    transport = ExtensionPlaywrightTransport(
+        EXTENSION_DIST, f"http://127.0.0.1:{FIXTURE_PORT}/dialog-form/"
+    )
+    try:
+        result = run_fill(transport, facts)
+        assert result.outcome is RunOutcome.COMPLETED, result.detail
+        assert len(result.filled_fields) == 2
+
+        state = transport.page_eval(
+            """() => ({
+                bannerGone: !document.getElementById("cookie-banner"),
+                permissionGranted: window.__fixture.permissionGranted,
+                values: Object.fromEntries(
+                    new FormData(document.getElementById("application-form")).entries()),
+            })"""
+        )
+        assert state["bannerGone"] is True  # dialog dismissed
+        assert state["permissionGranted"] is False  # Reject chosen, not Accept
+        assert state["values"] == {"full_name": "Ada Lovelace", "email": "ada@example.test"}
+    finally:
+        transport.close()
