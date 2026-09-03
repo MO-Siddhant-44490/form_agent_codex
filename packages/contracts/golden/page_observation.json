@@ -1,0 +1,41 @@
+{
+  "run_id": "run-42",
+  "tab_id": 17,
+  "frame_id": "main",
+  "url": "https://example.test/apply/page-2",
+  "origin": "https://example.test",
+  "title": "Application - Step 2",
+  "page_fingerprint": "sha256:2f7a1c9e",
+  "observation_seq": 4,
+  "observed_at": "2026-09-02T12:00:00Z",
+  "classification": [
+    {
+      "label": "form",
+      "confidence": 0.98
+    }
+  ],
+  "fields": [
+    {
+      "field_id": "field-dob",
+      "target": {
+        "field_id": "field-dob",
+        "role": "textbox",
+        "accessible_name": "Date of birth",
+        "input_type": "date"
+      },
+      "input_type": "date",
+      "label": "Date of birth",
+      "accessible_name": "Date of birth",
+      "required": true,
+      "disabled": false,
+      "readonly": false,
+      "visible": true,
+      "value_redacted": false
+    }
+  ],
+  "dialogs": [],
+  "iframes": [],
+  "login_detected": false,
+  "captcha_detected": false,
+  "dom_stable": true
+}

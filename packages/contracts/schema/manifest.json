@@ -1,0 +1,15 @@
+{
+  "protocol_version": "1.0",
+  "schemas": [
+    "action_result.json",
+    "approval_token.json",
+    "browser_action.json",
+    "budget_state.json",
+    "document_fact.json",
+    "envelope.json",
+    "page_observation.json",
+    "run_state.json",
+    "tab_session.json",
+    "verification_result.json"
+  ]
+}

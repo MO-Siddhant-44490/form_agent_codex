@@ -1,0 +1,22 @@
+{
+  "action_id": "action-184",
+  "run_id": "run-42",
+  "tab_id": 17,
+  "origin": "https://example.test",
+  "sequence_number": 12,
+  "kind": "SET_TEXT",
+  "target": {
+    "field_id": "field-dob",
+    "role": "textbox",
+    "accessible_name": "Date of birth",
+    "input_type": "date"
+  },
+  "value_ref": "fact://fact-dob-1",
+  "expected_effect": {
+    "field_value": "1998-04-17",
+    "validation_error": false
+  },
+  "risk": "low",
+  "idempotency_key": "run-42:page-2:field-dob:1998-04-17",
+  "source_observation_seq": 4
+}

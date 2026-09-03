@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "attached_at": {
+      "format": "date-time",
+      "title": "Attached At",
+      "type": "string"
+    },
+    "last_action_seq": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Last Action Seq",
+      "type": "integer"
+    },
+    "last_observation_seq": {
+      "default": 0,
+      "minimum": 0,
+      "title": "Last Observation Seq",
+      "type": "integer"
+    },
+    "origin": {
+      "title": "Origin",
+      "type": "string"
+    },
+    "page_fingerprint": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Page Fingerprint"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "tab_id": {
+      "title": "Tab Id",
+      "type": "integer"
+    }
+  },
+  "required": [
+    "run_id",
+    "tab_id",
+    "origin",
+    "attached_at"
+  ],
+  "title": "TabSession",
+  "type": "object",
+  "x-protocol-version": "1.0"
+}

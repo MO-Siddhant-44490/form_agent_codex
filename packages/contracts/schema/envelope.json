@@ -1,0 +1,49 @@
+{
+  "$defs": {
+    "MessageType": {
+      "enum": [
+        "browser_action",
+        "page_observation",
+        "action_result",
+        "verification_result"
+      ],
+      "title": "MessageType",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "message_type": {
+      "$ref": "#/$defs/MessageType"
+    },
+    "payload": {
+      "additionalProperties": true,
+      "title": "Payload",
+      "type": "object"
+    },
+    "protocol_version": {
+      "title": "Protocol Version",
+      "type": "string"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "sent_at": {
+      "format": "date-time",
+      "title": "Sent At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "protocol_version",
+    "message_type",
+    "run_id",
+    "sent_at",
+    "payload"
+  ],
+  "title": "Envelope",
+  "type": "object",
+  "x-protocol-version": "1.0"
+}

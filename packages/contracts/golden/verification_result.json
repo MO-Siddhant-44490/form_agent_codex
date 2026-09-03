@@ -1,0 +1,10 @@
+{
+  "action_id": "action-184",
+  "status": "SUCCESS",
+  "evidence": {
+    "observed_value": "1998-04-17",
+    "field_valid": true,
+    "page_fingerprint": "sha256:2f7a1c9e"
+  },
+  "recommended_transition": "CONTINUE"
+}

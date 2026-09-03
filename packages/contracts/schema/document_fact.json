@@ -1,0 +1,159 @@
+{
+  "$defs": {
+    "FactSource": {
+      "additionalProperties": false,
+      "description": "Document region a fact was extracted from (provenance, invariant 11).",
+      "properties": {
+        "bounding_box": {
+          "anyOf": [
+            {
+              "maxItems": 4,
+              "minItems": 4,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bounding Box"
+        },
+        "document_id": {
+          "title": "Document Id",
+          "type": "string"
+        },
+        "page": {
+          "minimum": 1,
+          "title": "Page",
+          "type": "integer"
+        },
+        "parser": {
+          "title": "Parser",
+          "type": "string"
+        },
+        "raw_text": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Raw Text"
+        }
+      },
+      "required": [
+        "document_id",
+        "page",
+        "parser"
+      ],
+      "title": "FactSource",
+      "type": "object"
+    },
+    "FactStatus": {
+      "enum": [
+        "extracted",
+        "corrected",
+        "user_provided",
+        "conflicted"
+      ],
+      "title": "FactStatus",
+      "type": "string"
+    },
+    "FactValueType": {
+      "enum": [
+        "string",
+        "date",
+        "number",
+        "boolean",
+        "email",
+        "phone",
+        "address",
+        "identifier",
+        "enum"
+      ],
+      "title": "FactValueType",
+      "type": "string"
+    },
+    "Sensitivity": {
+      "enum": [
+        "public",
+        "personal",
+        "sensitive",
+        "credential"
+      ],
+      "title": "Sensitivity",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "confidence": {
+      "maximum": 1.0,
+      "minimum": 0.0,
+      "title": "Confidence",
+      "type": "number"
+    },
+    "fact_id": {
+      "title": "Fact Id",
+      "type": "string"
+    },
+    "key": {
+      "title": "Key",
+      "type": "string"
+    },
+    "sensitivity": {
+      "$ref": "#/$defs/Sensitivity"
+    },
+    "source": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/FactSource"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "status": {
+      "$ref": "#/$defs/FactStatus"
+    },
+    "value": {
+      "title": "Value",
+      "type": "string"
+    },
+    "value_type": {
+      "$ref": "#/$defs/FactValueType"
+    }
+  },
+  "required": [
+    "fact_id",
+    "key",
+    "value",
+    "value_type",
+    "confidence",
+    "sensitivity",
+    "status"
+  ],
+  "title": "DocumentFact",
+  "type": "object",
+  "x-protocol-version": "1.0"
+}

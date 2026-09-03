@@ -1,0 +1,129 @@
+{
+  "$defs": {
+    "BudgetState": {
+      "additionalProperties": false,
+      "description": "Hard caps that force termination with a classified outcome (invariant 12).",
+      "properties": {
+        "max_model_calls": {
+          "exclusiveMinimum": 0,
+          "title": "Max Model Calls",
+          "type": "integer"
+        },
+        "max_retries_per_action": {
+          "exclusiveMinimum": 0,
+          "title": "Max Retries Per Action",
+          "type": "integer"
+        },
+        "max_steps": {
+          "exclusiveMinimum": 0,
+          "title": "Max Steps",
+          "type": "integer"
+        },
+        "max_wall_clock_seconds": {
+          "exclusiveMinimum": 0,
+          "title": "Max Wall Clock Seconds",
+          "type": "integer"
+        },
+        "model_calls_used": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Model Calls Used",
+          "type": "integer"
+        },
+        "steps_used": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Steps Used",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "max_steps",
+        "max_retries_per_action",
+        "max_model_calls",
+        "max_wall_clock_seconds"
+      ],
+      "title": "BudgetState",
+      "type": "object"
+    },
+    "RunOutcome": {
+      "enum": [
+        "COMPLETED",
+        "NEEDS_USER",
+        "BLOCKED",
+        "BUDGET_EXHAUSTED",
+        "FATAL_FAILURE",
+        "CANCELLED"
+      ],
+      "title": "RunOutcome",
+      "type": "string"
+    },
+    "RunPhase": {
+      "enum": [
+        "ingest_documents",
+        "build_fact_store",
+        "attach_tab",
+        "perceive",
+        "classify",
+        "map_fields",
+        "clarify",
+        "policy_gate",
+        "act",
+        "verify",
+        "recover",
+        "final_review",
+        "await_submit_approval",
+        "submit",
+        "verify_receipt",
+        "terminal"
+      ],
+      "title": "RunPhase",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "budgets": {
+      "$ref": "#/$defs/BudgetState"
+    },
+    "created_at": {
+      "format": "date-time",
+      "title": "Created At",
+      "type": "string"
+    },
+    "outcome": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RunOutcome"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "phase": {
+      "$ref": "#/$defs/RunPhase"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "updated_at": {
+      "format": "date-time",
+      "title": "Updated At",
+      "type": "string"
+    }
+  },
+  "required": [
+    "run_id",
+    "phase",
+    "budgets",
+    "created_at",
+    "updated_at"
+  ],
+  "title": "RunState",
+  "type": "object",
+  "x-protocol-version": "1.0"
+}

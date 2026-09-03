@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Basic Application Form — Fixture</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 2rem auto; padding: 0 1rem; }
+  label { display: block; margin-top: 1rem; font-weight: 600; }
+  input, select { display: block; margin-top: .25rem; padding: .4rem; width: 100%; box-sizing: border-box; }
+  fieldset { margin-top: 1rem; }
+  .radio-row label, .check-row label { display: inline; font-weight: 400; margin: 0 .25rem 0 0; }
+  .radio-row input, .check-row input { display: inline; width: auto; }
+  .error { color: #b00020; font-size: .85rem; min-height: 1em; }
+  /* Honeypot: visually hidden bot trap. Must never be filled (ground truth). */
+  .hp-field { position: absolute; left: -9999px; top: -9999px; }
+  #submission-result { margin-top: 1.5rem; padding: 1rem; background: #f4f4f4; white-space: pre-wrap; font-family: monospace; }
+  button { margin-top: 1.5rem; padding: .5rem 1.5rem; }
+</style>
+</head>
+<body>
+<h1>Job Application</h1>
+<form id="application-form" novalidate>
+  <label for="full-name">Full name</label>
+  <input id="full-name" name="full_name" type="text" required autocomplete="name">
+  <div class="error" id="full-name-error"></div>
+
+  <label for="email">Email address</label>
+  <input id="email" name="email" type="email" required autocomplete="email">
+  <div class="error" id="email-error"></div>
+
+  <label for="phone">Phone number</label>
+  <input id="phone" name="phone" type="tel" autocomplete="tel" placeholder="+1 555 000 0000">
+  <div class="error" id="phone-error"></div>
+
+  <label for="dob">Date of birth</label>
+  <input id="dob" name="date_of_birth" type="date" required>
+  <div class="error" id="dob-error"></div>
+
+  <label for="country">Country of residence</label>
+  <select id="country" name="country" required>
+    <option value="">Select a country…</option>
+    <option value="DE">Germany</option>
+    <option value="IN">India</option>
+    <option value="US">United States</option>
+    <option value="GB">United Kingdom</option>
+  </select>
+  <div class="error" id="country-error"></div>
+
+  <label for="experience">Years of experience</label>
+  <input id="experience" name="years_experience" type="number" min="0" max="60" required>
+  <div class="error" id="experience-error"></div>
+
+  <fieldset class="radio-row">
+    <legend>Preferred contact method</legend>
+    <input id="contact-email" name="contact_method" type="radio" value="email" required>
+    <label for="contact-email">Email</label>
+    <input id="contact-phone" name="contact_method" type="radio" value="phone">
+    <label for="contact-phone">Phone</label>
+  </fieldset>
+
+  <div class="check-row">
+    <input id="subscribe" name="subscribe" type="checkbox">
+    <label for="subscribe">Subscribe to the newsletter</label>
+  </div>
+
+  <!-- Bot trap: hidden from real users; agents must never fill it. -->
+  <div class="hp-field" aria-hidden="true">
+    <label for="website">Website</label>
+    <input id="website" name="website" type="text" tabindex="-1" autocomplete="off">
+  </div>
+
+  <button id="submit-btn" type="submit">Submit application</button>
+  <button id="reset-btn" type="button">Reset</button>
+</form>
+
+<div id="submission-result" hidden></div>
+
+<script>
+  // Fixture harness: local-only submission recording and deterministic reset.
+  // No network requests, no external side effects (AGENTS.md invariant 1).
+  const form = document.getElementById("application-form");
+  const result = document.getElementById("submission-result");
+
+  window.__fixture = {
+    id: "basic-form",
+    submissions: [],
+    reset() {
+      form.reset();
+      result.hidden = true;
+      result.textContent = "";
+      window.__fixture.submissions = [];
+      for (const el of form.querySelectorAll(".error")) el.textContent = "";
+    },
+  };
+
+  function validateField(input) {
+    const errorEl = document.getElementById(input.id + "-error")
+      ?? document.getElementById(input.name + "-error");
+    if (!errorEl) return input.checkValidity();
+    if (!input.checkValidity()) {
+      errorEl.textContent = input.validationMessage;
+      return false;
+    }
+    errorEl.textContent = "";
+    return true;
+  }
+
+  form.addEventListener("blur", (e) => {
+    if (e.target instanceof HTMLElement && "checkValidity" in e.target) validateField(e.target);
+  }, true);
+
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    let ok = true;
+    for (const input of form.querySelectorAll("input, select")) {
+      if (input.closest(".hp-field")) continue;
+      if (!validateField(input)) ok = false;
+    }
+    // Honeypot check: any value here marks the submission as bot-flagged.
+    const honeypotFilled = form.elements.website.value !== "";
+    if (!ok) return;
+    const data = Object.fromEntries(new FormData(form).entries());
+    data.subscribe = form.elements.subscribe.checked;
+    const record = { at: new Date().toISOString(), botFlagged: honeypotFilled, data };
+    window.__fixture.submissions.push(record);
+    result.hidden = false;
+    result.textContent = "SUBMITTED (fixture-local only)\n" + JSON.stringify(record, null, 2);
+  });
+
+  document.getElementById("reset-btn").addEventListener("click", () => window.__fixture.reset());
+</script>
+</body>
+</html>

@@ -1,0 +1,357 @@
+{
+  "$defs": {
+    "ActionKind": {
+      "enum": [
+        "SET_TEXT",
+        "SET_NUMBER",
+        "SELECT_OPTION",
+        "SET_CHECKBOX",
+        "SET_RADIO",
+        "SET_DATE",
+        "UPLOAD_FILE",
+        "CLICK",
+        "SCROLL",
+        "DISMISS_DIALOG",
+        "WAIT_FOR_STABLE_PAGE",
+        "NAVIGATE_NEXT",
+        "SUBMIT"
+      ],
+      "title": "ActionKind",
+      "type": "string"
+    },
+    "ExpectedEffect": {
+      "additionalProperties": false,
+      "description": "What the verifier should observe after the action (invariant 7).",
+      "properties": {
+        "checked": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Checked"
+        },
+        "dialog_dismissed": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Dialog Dismissed"
+        },
+        "expected_url_prefix": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expected Url Prefix"
+        },
+        "field_value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Field Value"
+        },
+        "navigation_expected": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Navigation Expected"
+        },
+        "selected_option": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Selected Option"
+        },
+        "validation_error": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Validation Error"
+        }
+      },
+      "title": "ExpectedEffect",
+      "type": "object"
+    },
+    "RiskLevel": {
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "title": "RiskLevel",
+      "type": "string"
+    },
+    "TargetDescriptor": {
+      "additionalProperties": false,
+      "description": "Resilient semantic locator for a form control (plan.md \u00a79).",
+      "properties": {
+        "accessible_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Accessible Name"
+        },
+        "autocomplete": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Autocomplete"
+        },
+        "bounding_box": {
+          "anyOf": [
+            {
+              "maxItems": 4,
+              "minItems": 4,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Bounding Box"
+        },
+        "field_id": {
+          "title": "Field Id",
+          "type": "string"
+        },
+        "input_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Input Type"
+        },
+        "label": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Label"
+        },
+        "name_attr": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name Attr"
+        },
+        "placeholder": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Placeholder"
+        },
+        "role": {
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "field_id",
+        "role"
+      ],
+      "title": "TargetDescriptor",
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "action_id": {
+      "title": "Action Id",
+      "type": "string"
+    },
+    "approval_token_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Approval Token Id"
+    },
+    "expected_effect": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ExpectedEffect"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "idempotency_key": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Idempotency Key"
+    },
+    "kind": {
+      "$ref": "#/$defs/ActionKind"
+    },
+    "origin": {
+      "title": "Origin",
+      "type": "string"
+    },
+    "risk": {
+      "$ref": "#/$defs/RiskLevel",
+      "default": "low"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "sequence_number": {
+      "minimum": 0,
+      "title": "Sequence Number",
+      "type": "integer"
+    },
+    "source_observation_seq": {
+      "anyOf": [
+        {
+          "type": "integer"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Source Observation Seq"
+    },
+    "tab_id": {
+      "title": "Tab Id",
+      "type": "integer"
+    },
+    "target": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/TargetDescriptor"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "value_ref": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Value Ref"
+    }
+  },
+  "required": [
+    "action_id",
+    "run_id",
+    "tab_id",
+    "origin",
+    "sequence_number",
+    "kind"
+  ],
+  "title": "BrowserAction",
+  "type": "object",
+  "x-protocol-version": "1.0"
+}

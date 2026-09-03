@@ -1,0 +1,82 @@
+{
+  "$defs": {
+    "ActionResultStatus": {
+      "enum": [
+        "EXECUTED",
+        "DUPLICATE",
+        "REJECTED",
+        "FAILED"
+      ],
+      "title": "ActionResultStatus",
+      "type": "string"
+    },
+    "RejectionReason": {
+      "enum": [
+        "run_mismatch",
+        "tab_mismatch",
+        "origin_mismatch",
+        "stale_sequence",
+        "stale_observation",
+        "missing_approval",
+        "policy_block",
+        "unsupported"
+      ],
+      "title": "RejectionReason",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "action_id": {
+      "title": "Action Id",
+      "type": "string"
+    },
+    "error": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Error"
+    },
+    "executed_at": {
+      "anyOf": [
+        {
+          "format": "date-time",
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Executed At"
+    },
+    "rejection_reason": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RejectionReason"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "status": {
+      "$ref": "#/$defs/ActionResultStatus"
+    }
+  },
+  "required": [
+    "action_id",
+    "status"
+  ],
+  "title": "ActionResult",
+  "type": "object",
+  "x-protocol-version": "1.0"
+}

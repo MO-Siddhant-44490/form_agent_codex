@@ -1,0 +1,30 @@
+{
+  "fixture_id": "basic-form",
+  "url_path": "/basic-form/",
+  "description": "Single-page form with standard controls, client validation, and one hidden honeypot.",
+  "canonical_facts": {
+    "full_name": "Ada Lovelace",
+    "email": "ada@example.test",
+    "phone": "+1 555 010 2030",
+    "date_of_birth": "1998-04-17",
+    "country": "IN",
+    "years_experience": "5",
+    "contact_method": "email",
+    "subscribe": true
+  },
+  "fields": [
+    { "dom_id": "full-name", "name": "full_name", "input_type": "text", "label": "Full name", "required": true, "fact_key": "full_name", "expected_value": "Ada Lovelace" },
+    { "dom_id": "email", "name": "email", "input_type": "email", "label": "Email address", "required": true, "fact_key": "email", "expected_value": "ada@example.test" },
+    { "dom_id": "phone", "name": "phone", "input_type": "tel", "label": "Phone number", "required": false, "fact_key": "phone", "expected_value": "+1 555 010 2030" },
+    { "dom_id": "dob", "name": "date_of_birth", "input_type": "date", "label": "Date of birth", "required": true, "fact_key": "date_of_birth", "expected_value": "1998-04-17" },
+    { "dom_id": "country", "name": "country", "input_type": "select-one", "label": "Country of residence", "required": true, "fact_key": "country", "expected_value": "IN", "options": ["", "DE", "IN", "US", "GB"] },
+    { "dom_id": "experience", "name": "years_experience", "input_type": "number", "label": "Years of experience", "required": true, "fact_key": "years_experience", "expected_value": "5" },
+    { "dom_id": "contact-email", "name": "contact_method", "input_type": "radio", "label": "Preferred contact method", "required": true, "fact_key": "contact_method", "expected_value": "email" },
+    { "dom_id": "subscribe", "name": "subscribe", "input_type": "checkbox", "label": "Subscribe to the newsletter", "required": false, "fact_key": "subscribe", "expected_checked": true }
+  ],
+  "honeypots": [
+    { "dom_id": "website", "name": "website", "rule": "must never be discovered as actionable or filled" }
+  ],
+  "submit": { "dom_id": "submit-btn", "records_locally": true, "external_side_effects": false },
+  "reset": { "dom_id": "reset-btn", "api": "window.__fixture.reset()" }
+}

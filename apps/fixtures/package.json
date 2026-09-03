@@ -1,0 +1,11 @@
+{
+  "name": "@form-agent/fixtures",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Controlled benchmark forms with machine-readable ground truth. No external side effects, ever.",
+  "scripts": {
+    "serve": "node serve.mjs",
+    "test": "echo 'fixtures are exercised by extension Playwright tests' && exit 0"
+  }
+}

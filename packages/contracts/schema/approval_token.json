@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Scoped, single-use, origin-bound, expiring submit approval (invariant 1).",
+  "properties": {
+    "expires_at": {
+      "format": "date-time",
+      "title": "Expires At",
+      "type": "string"
+    },
+    "issued_at": {
+      "format": "date-time",
+      "title": "Issued At",
+      "type": "string"
+    },
+    "origin": {
+      "title": "Origin",
+      "type": "string"
+    },
+    "run_id": {
+      "title": "Run Id",
+      "type": "string"
+    },
+    "scope": {
+      "const": "submit",
+      "default": "submit",
+      "title": "Scope",
+      "type": "string"
+    },
+    "token_id": {
+      "title": "Token Id",
+      "type": "string"
+    },
+    "used": {
+      "default": false,
+      "title": "Used",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "token_id",
+    "run_id",
+    "origin",
+    "issued_at",
+    "expires_at"
+  ],
+  "title": "ApprovalToken",
+  "type": "object",
+  "x-protocol-version": "1.0"
+}

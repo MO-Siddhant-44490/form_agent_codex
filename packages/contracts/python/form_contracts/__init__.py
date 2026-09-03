@@ -1,0 +1,119 @@
+"""Shared typed contracts: the Pydantic models here are the single source of
+truth. JSON Schema and the TypeScript/Zod package are generated from them
+(scripts/export_schemas.py); CI fails on drift."""
+
+from .actions import (
+    MUTATING_KINDS,
+    ActionKind,
+    ActionResult,
+    ActionResultStatus,
+    BrowserAction,
+    ExpectedEffect,
+    RejectionReason,
+)
+from .common import (
+    PROTOCOL_VERSION,
+    SUPPORTED_PROTOCOL_VERSIONS,
+    HumanTakeoverReason,
+    RiskLevel,
+    RunOutcome,
+    Sensitivity,
+    StrictModel,
+    validate_origin,
+)
+from .envelope import PAYLOAD_MODELS, Envelope, MessageType
+from .facts import DocumentFact, FactSource, FactStatus, FactValueType
+from .observation import (
+    CREDENTIAL_INPUT_TYPES,
+    DialogInfo,
+    DialogKind,
+    FormField,
+    FrameInfo,
+    PageClass,
+    PageClassCandidate,
+    PageObservation,
+    TargetDescriptor,
+)
+from .redaction import (
+    REDACTED,
+    is_sensitive_key,
+    redact_mapping,
+    redacted_fact_repr,
+)
+from .session import (
+    ApprovalToken,
+    BudgetState,
+    RunPhase,
+    RunState,
+    TabSession,
+)
+from .verification import (
+    FailureClass,
+    RecommendedTransition,
+    VerificationEvidence,
+    VerificationResult,
+    VerificationStatus,
+)
+
+# Models exported to JSON Schema (and from there to TypeScript/Zod).
+EXPORTED_MODELS = [
+    DocumentFact,
+    PageObservation,
+    BrowserAction,
+    ActionResult,
+    VerificationResult,
+    TabSession,
+    ApprovalToken,
+    BudgetState,
+    RunState,
+    Envelope,
+]
+
+__all__ = [  # noqa: RUF022 - grouped by module
+    "PROTOCOL_VERSION",
+    "SUPPORTED_PROTOCOL_VERSIONS",
+    "StrictModel",
+    "validate_origin",
+    "Sensitivity",
+    "RiskLevel",
+    "RunOutcome",
+    "HumanTakeoverReason",
+    "DocumentFact",
+    "FactSource",
+    "FactStatus",
+    "FactValueType",
+    "TargetDescriptor",
+    "FormField",
+    "CREDENTIAL_INPUT_TYPES",
+    "PageClass",
+    "PageClassCandidate",
+    "DialogInfo",
+    "DialogKind",
+    "FrameInfo",
+    "PageObservation",
+    "ActionKind",
+    "MUTATING_KINDS",
+    "ExpectedEffect",
+    "BrowserAction",
+    "ActionResult",
+    "ActionResultStatus",
+    "RejectionReason",
+    "VerificationStatus",
+    "FailureClass",
+    "RecommendedTransition",
+    "VerificationEvidence",
+    "VerificationResult",
+    "TabSession",
+    "ApprovalToken",
+    "BudgetState",
+    "RunPhase",
+    "RunState",
+    "Envelope",
+    "MessageType",
+    "PAYLOAD_MODELS",
+    "REDACTED",
+    "is_sensitive_key",
+    "redact_mapping",
+    "redacted_fact_repr",
+    "EXPORTED_MODELS",
+]

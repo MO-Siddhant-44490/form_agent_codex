@@ -1,0 +1,5 @@
+// AUTO-GENERATED — do not edit. Source: packages/contracts/schema/run_state.json
+import { z } from "zod"
+
+export const RunStateSchema = z.object({ "budgets": z.object({ "max_model_calls": z.number().int().gt(0), "max_retries_per_action": z.number().int().gt(0), "max_steps": z.number().int().gt(0), "max_wall_clock_seconds": z.number().int().gt(0), "model_calls_used": z.number().int().gte(0).default(0), "steps_used": z.number().int().gte(0).default(0) }).strict().describe("Hard caps that force termination with a classified outcome (invariant 12)."), "created_at": z.string().datetime({ offset: true }), "outcome": z.union([z.enum(["COMPLETED","NEEDS_USER","BLOCKED","BUDGET_EXHAUSTED","FATAL_FAILURE","CANCELLED"]), z.null()]).default(null), "phase": z.enum(["ingest_documents","build_fact_store","attach_tab","perceive","classify","map_fields","clarify","policy_gate","act","verify","recover","final_review","await_submit_approval","submit","verify_receipt","terminal"]), "run_id": z.string(), "updated_at": z.string().datetime({ offset: true }) }).strict()
+export type RunState = z.infer<typeof RunStateSchema>

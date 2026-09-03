@@ -1,0 +1,150 @@
+{
+  "$defs": {
+    "FailureClass": {
+      "enum": [
+        "element_not_found",
+        "stale_element",
+        "value_mismatch",
+        "validation_error",
+        "page_changed",
+        "navigation_failed",
+        "permission_denied",
+        "bot_detection",
+        "login_required",
+        "captcha_required",
+        "timeout",
+        "unsupported_widget",
+        "unknown"
+      ],
+      "title": "FailureClass",
+      "type": "string"
+    },
+    "RecommendedTransition": {
+      "enum": [
+        "CONTINUE",
+        "REPERCEIVE",
+        "RETRY",
+        "ASK_USER",
+        "STOP"
+      ],
+      "title": "RecommendedTransition",
+      "type": "string"
+    },
+    "VerificationEvidence": {
+      "additionalProperties": false,
+      "properties": {
+        "field_valid": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Field Valid"
+        },
+        "notes": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Notes"
+        },
+        "observed_value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Observed Value"
+        },
+        "page_fingerprint": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Page Fingerprint"
+        },
+        "validation_message": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Validation Message"
+        }
+      },
+      "title": "VerificationEvidence",
+      "type": "object"
+    },
+    "VerificationStatus": {
+      "enum": [
+        "SUCCESS",
+        "RETRYABLE_FAILURE",
+        "NEEDS_REPERCEPTION",
+        "NEEDS_USER",
+        "BLOCKED",
+        "FATAL_FAILURE"
+      ],
+      "title": "VerificationStatus",
+      "type": "string"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "action_id": {
+      "title": "Action Id",
+      "type": "string"
+    },
+    "evidence": {
+      "$ref": "#/$defs/VerificationEvidence"
+    },
+    "failure_class": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/FailureClass"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "recommended_transition": {
+      "$ref": "#/$defs/RecommendedTransition"
+    },
+    "status": {
+      "$ref": "#/$defs/VerificationStatus"
+    }
+  },
+  "required": [
+    "action_id",
+    "status",
+    "evidence",
+    "recommended_transition"
+  ],
+  "title": "VerificationResult",
+  "type": "object",
+  "x-protocol-version": "1.0"
+}

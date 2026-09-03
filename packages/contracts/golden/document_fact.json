@@ -1,0 +1,16 @@
+{
+  "fact_id": "fact-dob-1",
+  "key": "date_of_birth",
+  "value": "1998-04-17",
+  "value_type": "date",
+  "confidence": 0.96,
+  "sensitivity": "personal",
+  "status": "extracted",
+  "source": {
+    "document_id": "doc-passport-1",
+    "page": 1,
+    "bounding_box": [120.0, 240.0, 410.0, 290.0],
+    "raw_text": "17 APR 1998",
+    "parser": "docling"
+  }
+}
