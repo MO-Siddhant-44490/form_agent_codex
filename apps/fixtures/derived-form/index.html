@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Derived-value Form — Fixture</title>
+<style>body{font-family:system-ui;max-width:600px;margin:2rem auto;padding:0 1rem}
+label{display:block;margin-top:1rem;font-weight:600}input{display:block;margin-top:.25rem;padding:.4rem;width:100%;box-sizing:border-box}</style>
+</head>
+<body>
+<h1>Loan Application</h1>
+<!-- The applicant's facts contain date_of_birth but NOT age; the agent must
+     derive age to fill this form. -->
+<form id="application-form">
+  <label for="name">Full name</label>
+  <input id="name" name="full_name" type="text" required>
+  <label for="age">Age (years)</label>
+  <input id="age" name="age" type="number" required>
+</form>
+<script>document.getElementById("application-form").addEventListener("submit",e=>e.preventDefault());
+window.__fixture={id:"derived-form",submissions:[]};</script>
+</body>
+</html>

@@ -87,3 +87,31 @@ def test_clarification_questions_surface_in_the_result():
     assert len(result.questions) == 1
     assert result.questions[0].field_id == "radio-group:contact_method"
     assert result.unmapped_required == ["radio-group:contact_method"]
+
+
+def test_driver_fills_derived_field_end_to_end():
+    """Full loop: a form with an Age field and only date_of_birth facts — the
+    driver derives, policy-approves (the derived fact has provenance), fills,
+    and verifies, ending COMPLETED."""
+    from agent_backend.document_intelligence.derivation import DerivationEngine
+    from agent_backend.driver import run_fill
+    from agent_backend.model_gateway.fake import FakeModelAdapter
+    from agent_backend.transports.fake import FakeField, FakeTransport
+    from form_contracts import RunOutcome
+
+    fields = [
+        FakeField("full-name", "text", "full_name", "Full name", required=True),
+        FakeField("age", "number", "age", "Age", required=True),
+    ]
+    transport = FakeTransport(fields=fields)
+    facts = [f for f in slice1_facts() if f.key in {"full_name", "date_of_birth"}]
+
+    mapper = ModelAssistedMapper(
+        FakeModelAdapter(), derivation_engine=DerivationEngine(FakeModelAdapter())
+    )
+    result = run_fill(transport, facts, mapper=mapper)
+
+    assert result.outcome is RunOutcome.COMPLETED, result.detail
+    age_field = next(f for f in transport.fields if f.field_id == "age")
+    assert age_field.value and int(age_field.value) > 0  # filled with a computed age
+    assert "age" in result.filled_fields

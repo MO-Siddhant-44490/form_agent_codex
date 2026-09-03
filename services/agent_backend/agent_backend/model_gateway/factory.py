@@ -41,7 +41,16 @@ def build_gateway_from_env() -> ModelGateway:
 
 def build_default_mapper() -> Mapper:
     """Application-level default mapper. MODEL_PROVIDER=none forces the pure
-    deterministic mapper (no model calls at all)."""
+    deterministic mapper (no model calls at all). Otherwise the model-assisted
+    mapper is wired with a derivation engine on the same gateway, so required
+    fields with no direct fact are computed (age, totals, tenure) before
+    falling back to clarification. DERIVE_VALUES=off disables derivation."""
     if os.environ.get("MODEL_PROVIDER", "").lower() == "none":
         return DeterministicMapper()
-    return ModelAssistedMapper(build_gateway_from_env())
+    gateway = build_gateway_from_env()
+    derivation = None
+    if os.environ.get("DERIVE_VALUES", "on").lower() != "off":
+        from ..document_intelligence.derivation import DerivationEngine
+
+        derivation = DerivationEngine(gateway)
+    return ModelAssistedMapper(gateway, derivation_engine=derivation)

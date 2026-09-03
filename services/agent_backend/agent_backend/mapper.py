@@ -18,6 +18,7 @@ from form_contracts import (
 )
 
 from .model_gateway.base import (
+    DerivationTarget,
     MappingRequest,
     ModelGateway,
     ModelUnavailable,
@@ -25,6 +26,29 @@ from .model_gateway.base import (
     mapping_field_from,
 )
 from .planner import KIND_FOR_INPUT_TYPE, desired_checked, match_fact
+
+# Form input types -> the value_type a derived value should take.
+_DERIVED_VALUE_TYPE = {
+    "number": "number",
+    "date": "date",
+    "email": "email",
+    "tel": "phone",
+}
+
+
+def _derivation_key(field: FormField) -> str:
+    import re
+
+    label = field.label or field.accessible_name or field.field_id
+    return re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_") or field.field_id
+
+
+def _derivation_description(field: FormField) -> str:
+    parts = [field.label or field.accessible_name or field.field_id]
+    if field.nearby_text and field.nearby_text not in parts[0]:
+        parts.append(field.nearby_text)
+    return " — ".join(parts)
+
 
 MIN_MODEL_CONFIDENCE = 0.6
 
@@ -137,10 +161,14 @@ class DeterministicMapper:
 
 class ModelAssistedMapper:
     """Deterministic first; the model ranks only the leftovers, and its
-    output is re-validated field-by-field before anything is assigned."""
+    output is re-validated field-by-field before anything is assigned. When a
+    derivation engine is provided, required fields still unmapped after the
+    model pass are batched and computed from available facts (age from DOB,
+    totals from line items, ...) before falling back to clarification."""
 
-    def __init__(self, gateway: ModelGateway) -> None:
+    def __init__(self, gateway: ModelGateway, derivation_engine=None) -> None:
         self._gateway = gateway
+        self._derivation = derivation_engine
 
     def map(
         self, observation: PageObservation, facts_by_key: dict[str, DocumentFact]
@@ -163,9 +191,23 @@ class ModelAssistedMapper:
             for key, fact in facts_by_key.items()
             if key not in {a.fact.key for a in outcome.assignments.values()}
         ]
-        if not unused_facts:
-            return outcome
+        # The model mapping pass runs only when there are leftover facts to map;
+        # derivation (below) still runs regardless, so a field whose value must
+        # be computed from already-used facts (age from a mapped DOB) is reached.
+        if unused_facts:
+            self._model_map(observation, facts_by_key, unresolved, unused_facts, outcome)
 
+        self._derive_missing(observation, facts_by_key, outcome)
+        return outcome
+
+    def _model_map(
+        self,
+        observation: PageObservation,
+        facts_by_key: dict[str, DocumentFact],
+        unresolved: list[FormField],
+        unused_facts: list[DocumentFact],
+        outcome: MappingOutcome,
+    ) -> None:
         request = MappingRequest(
             fields=tuple(mapping_field_from(f) for f in unresolved),
             facts=tuple(mapping_fact_from(f) for f in unused_facts),
@@ -175,7 +217,7 @@ class ModelAssistedMapper:
         except ModelUnavailable:
             # Deterministic fallback: abstain — the missing-fact questions
             # from the deterministic pass stand (plan.md §11.2).
-            return outcome
+            return
         outcome.model_calls.append(result.metadata)
 
         fields_by_id = {f.field_id: f for f in unresolved}
@@ -209,4 +251,56 @@ class ModelAssistedMapper:
                 ]
             else:
                 outcome.questions.append(assigned)
+
+        self._derive_missing(observation, facts_by_key, outcome)
         return outcome
+
+    def _derive_missing(
+        self,
+        observation: PageObservation,
+        facts_by_key: dict[str, DocumentFact],
+        outcome: MappingOutcome,
+    ) -> None:
+        """For required fields still unmapped after deterministic + model
+        passes, ask the derivation engine to compute a value from available
+        facts. A field whose value can be derived is filled and its
+        clarification question withdrawn; the uncomputable remainder stays a
+        question (never guessed)."""
+        if self._derivation is None or not facts_by_key:
+            return
+        pending = [
+            f
+            for f in observation.fields
+            if _mappable(f)
+            and f.field_id not in outcome.assignments
+            and f.required
+            and match_fact(f, facts_by_key) is None
+        ]
+        if not pending:
+            return
+
+        # One batched derivation call: distinct target key -> field(s).
+        targets: dict[str, DerivationTarget] = {}
+        fields_for_key: dict[str, list[FormField]] = {}
+        for field in pending:
+            key = _derivation_key(field)
+            fields_for_key.setdefault(key, []).append(field)
+            targets.setdefault(
+                key,
+                DerivationTarget(
+                    key=key,
+                    value_type=_DERIVED_VALUE_TYPE.get(field.input_type, "string"),
+                    description=_derivation_description(field),
+                ),
+            )
+
+        result = self._derivation.derive(list(facts_by_key.values()), list(targets.values()))
+        outcome.model_calls.extend(result.model_calls)
+        for derived in result.facts:
+            for field in fields_for_key.get(derived.key, []):
+                assigned = _assign(field, derived)
+                if isinstance(assigned, Assignment):
+                    outcome.assignments[field.field_id] = assigned
+                    outcome.questions = [
+                        q for q in outcome.questions if q.field_id != field.field_id
+                    ]

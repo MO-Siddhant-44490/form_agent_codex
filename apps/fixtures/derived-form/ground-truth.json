@@ -1,0 +1,11 @@
+{
+  "fixture_id": "derived-form",
+  "url_path": "/derived-form/",
+  "description": "Form needs Age, which is not a direct fact; the agent must derive it from date_of_birth.",
+  "facts_available": ["full_name", "date_of_birth"],
+  "requires_derivation": {"age": "computed from date_of_birth"},
+  "fields": [
+    {"dom_id": "name", "name": "full_name", "input_type": "text", "required": true, "fact_key": "full_name"},
+    {"dom_id": "age", "name": "age", "input_type": "number", "required": true, "derived_from": "date_of_birth"}
+  ]
+}

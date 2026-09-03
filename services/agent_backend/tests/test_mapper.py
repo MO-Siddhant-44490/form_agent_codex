@@ -151,3 +151,69 @@ def test_prompt_injection_in_labels_cannot_bypass_validation():
     for assignment in outcome.assignments.values():
         assert isinstance(assignment, Assignment)
         assert assignment.value == facts_by_key()[assignment.fact.key].value
+
+
+def test_derivation_fills_required_field_with_no_direct_fact():
+    """A form field the facts don't directly cover (age) gets computed from a
+    fact that is present (date_of_birth) — no clarification needed."""
+    from agent_backend.document_intelligence.derivation import DerivationEngine
+    from agent_backend.transports.fake import FakeField, FakeTransport
+    from form_contracts import FactStatus
+
+    # A form asking for Age; facts only have date_of_birth.
+    fields = [FakeField("age", "number", "age", "Age", required=True)]
+    facts = {
+        "date_of_birth": next(f for f in slice1_facts() if f.key == "date_of_birth"),
+    }
+    mapper = ModelAssistedMapper(
+        FakeModelAdapter(), derivation_engine=DerivationEngine(FakeModelAdapter())
+    )
+    outcome = mapper.map(FakeTransport(fields=fields).observe(), facts)
+
+    assert "age" in outcome.assignments
+    assigned = outcome.assignments["age"]
+    assert assigned.fact.status is FactStatus.DERIVED
+    assert assigned.fact.derivation.operation == "age_from_date_of_birth"
+    assert assigned.value  # a concrete computed age
+    assert outcome.questions == []  # no clarification: it was derivable
+    # Two calls: the model-mapping pass (finds no fact for Age) then derivation.
+    assert len(outcome.model_calls) == 2
+
+
+def test_underivable_field_still_asks_instead_of_guessing():
+    from agent_backend.document_intelligence.derivation import DerivationEngine
+    from agent_backend.transports.fake import FakeField, FakeTransport
+    from form_contracts import QuestionKind
+
+    # Passport number cannot be computed from a date of birth.
+    fields = [FakeField("passport", "text", "passport_number", "Passport number", required=True)]
+    facts = {"date_of_birth": next(f for f in slice1_facts() if f.key == "date_of_birth")}
+    mapper = ModelAssistedMapper(
+        FakeModelAdapter(), derivation_engine=DerivationEngine(FakeModelAdapter())
+    )
+    outcome = mapper.map(FakeTransport(fields=fields).observe(), facts)
+
+    assert "passport" not in outcome.assignments
+    assert any(q.field_id == "passport" for q in outcome.questions)
+    assert any(q.kind is QuestionKind.MISSING_FACT for q in outcome.questions)
+
+
+def test_derivation_runs_even_when_all_facts_are_mapped_elsewhere():
+    """A form with both a DOB field and an Age field: date_of_birth is mapped
+    to DOB (used), and age is still derived from it."""
+    from agent_backend.document_intelligence.derivation import DerivationEngine
+    from agent_backend.transports.fake import FakeField, FakeTransport
+
+    fields = [
+        FakeField("dob", "date", "date_of_birth", "Date of birth", required=True),
+        FakeField("age", "number", "age", "Age", required=True),
+    ]
+    facts = {"date_of_birth": next(f for f in slice1_facts() if f.key == "date_of_birth")}
+    mapper = ModelAssistedMapper(
+        FakeModelAdapter(), derivation_engine=DerivationEngine(FakeModelAdapter())
+    )
+    outcome = mapper.map(FakeTransport(fields=fields).observe(), facts)
+    # DOB mapped directly, age derived from it.
+    assert outcome.assignments["dob"].fact.key == "date_of_birth"
+    assert "age" in outcome.assignments
+    assert outcome.assignments["age"].fact.status.value == "derived"
