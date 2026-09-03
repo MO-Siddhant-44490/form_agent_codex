@@ -25,8 +25,10 @@ def build_pipeline() -> DocumentPipeline:
 def test_document_to_form_fill_with_conflict_resolution():
     pipeline = build_pipeline()
 
-    _, report1 = pipeline.ingest(build_pdf(APPLICATION_LINES), "application.pdf", "application/pdf")
-    _, report2 = pipeline.ingest(build_pdf(PASSPORT_LINES), "passport.pdf", "application/pdf")
+    _, report1, _ = pipeline.ingest(
+        build_pdf(APPLICATION_LINES), "application.pdf", "application/pdf"
+    )
+    _, report2, _ = pipeline.ingest(build_pdf(PASSPORT_LINES), "passport.pdf", "application/pdf")
     assert len(report1.facts) == 6
     assert len(report2.facts) == 2  # name + dob
 

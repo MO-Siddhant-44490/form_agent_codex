@@ -100,3 +100,52 @@ class GatewayAccounting:
 
     def record(self, metadata: ModelCallMetadata) -> None:
         self.calls.append(metadata)
+
+
+# -- derivation (compute/infer values not directly in the document) --------
+
+
+@dataclass(frozen=True)
+class AvailableFact:
+    """A fact already extracted, offered to the derivation model as a source.
+    Values are included so the model can actually compute (age, sums, tenure);
+    the derivation stage runs on already-ingested document data, and its
+    output is re-validated against these source ids before use."""
+
+    fact_id: str
+    key: str
+    value: str
+    value_type: str
+
+
+@dataclass(frozen=True)
+class DerivationTarget:
+    """A value the form needs that is not directly present."""
+
+    key: str
+    value_type: str
+    description: str
+
+
+@dataclass(frozen=True)
+class DerivationRequest:
+    available: tuple[AvailableFact, ...]
+    targets: tuple[DerivationTarget, ...]
+    today: str  # ISO date, so "age"-style calculations are deterministic
+
+    def fingerprint(self) -> str:
+        payload = json.dumps(
+            {
+                "available": [a.__dict__ for a in self.available],
+                "targets": [t.__dict__ for t in self.targets],
+                "today": self.today,
+            },
+            sort_keys=True,
+        )
+        return hashlib.sha256(payload.encode()).hexdigest()[:16]
+
+
+@dataclass
+class DerivationResult:
+    facts: list[DocumentFact]
+    metadata: ModelCallMetadata

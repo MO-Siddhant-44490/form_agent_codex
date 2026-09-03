@@ -8,7 +8,7 @@ from fastapi import Depends, FastAPI, HTTPException, UploadFile, WebSocket, WebS
 from form_contracts import redacted_fact_repr
 
 from ..document_intelligence.fact_store import FactStore
-from ..document_intelligence.pdf_adapter import PyMuPdfParserAdapter
+from ..document_intelligence.parser_factory import build_parser_from_env
 from ..document_intelligence.pipeline import DocumentPipeline
 from ..document_intelligence.store import DocumentRejected, DocumentStore
 from ..mapper import DeterministicMapper, Mapper
@@ -83,10 +83,10 @@ def create_app(state: AppState | None = None) -> FastAPI:
             raise HTTPException(404, "run not found")
         data = await file.read()
         pipeline = DocumentPipeline(
-            store=st.documents, parser=PyMuPdfParserAdapter(), facts=st.facts
+            store=st.documents, parser=build_parser_from_env(), facts=st.facts
         )
         try:
-            record, report = pipeline.ingest(
+            record, report, _model_calls = pipeline.ingest(
                 data, file.filename or "upload", file.content_type or "application/octet-stream"
             )
         except DocumentRejected as error:

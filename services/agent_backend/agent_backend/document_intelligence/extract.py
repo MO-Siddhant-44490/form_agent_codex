@@ -94,8 +94,14 @@ def _split_label_value(text: str) -> tuple[str, str] | None:
     return None
 
 
+def _slug(label: str) -> str:
+    import re
+
+    return re.sub(r"[^a-z0-9]+", "_", label.lower()).strip("_")
+
+
 def _fact_from_region(
-    document_id: str, parser: str, region: ParsedRegion, counter: int
+    document_id: str, parser: str, region: ParsedRegion, counter: int, keep_unknown: bool
 ) -> DocumentFact | str | None:
     split = _split_label_value(region.text)
     if split is None:
@@ -103,7 +109,31 @@ def _fact_from_region(
     label, raw_value = split
     spec = _ALIAS_INDEX.get(label)
     if spec is None:
-        return None
+        if not keep_unknown:
+            return None
+        # Keep every extracted key-value as a generic string fact so the
+        # derivation stage has the full material (e.g. salary components to
+        # sum). Provenance is preserved; normalization applies only to known
+        # keys.
+        key = _slug(label)
+        if not key:
+            return None
+        return DocumentFact(
+            fact_id=f"{document_id}-{key}-{counter}",
+            key=key,
+            value=normalize_string(raw_value),
+            value_type=FactValueType.STRING,
+            confidence=BASE_CONFIDENCE_DIGITAL * region.confidence,
+            sensitivity=Sensitivity.PERSONAL,
+            status=FactStatus.EXTRACTED,
+            source=FactSource(
+                document_id=document_id,
+                page=region.page,
+                bounding_box=region.bounding_box,
+                raw_text=region.text,
+                parser=parser,
+            ),
+        )
     normalizer = _NORMALIZERS.get(spec.value_type)
     if normalizer is None:
         value = normalize_string(raw_value)
@@ -130,7 +160,7 @@ def _fact_from_region(
     )
 
 
-def extract_facts(parsed: ParsedDocument) -> ExtractionReport:
+def extract_facts(parsed: ParsedDocument, *, keep_unknown: bool = False) -> ExtractionReport:
     facts: list[DocumentFact] = []
     skipped: list[PageQuality] = []
     unparsed: list[str] = []
@@ -142,7 +172,9 @@ def extract_facts(parsed: ParsedDocument) -> ExtractionReport:
             continue
         for region in page.regions:
             counter += 1
-            produced = _fact_from_region(parsed.document_id, parsed.parser, region, counter)
+            produced = _fact_from_region(
+                parsed.document_id, parsed.parser, region, counter, keep_unknown
+            )
             if isinstance(produced, DocumentFact):
                 facts.append(produced)
             elif isinstance(produced, str):

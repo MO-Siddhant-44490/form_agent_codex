@@ -22,7 +22,7 @@ from .common import (
     validate_origin,
 )
 from .envelope import PAYLOAD_MODELS, Envelope, MessageType
-from .facts import DocumentFact, FactSource, FactStatus, FactValueType
+from .facts import Derivation, DocumentFact, FactSource, FactStatus, FactValueType
 from .mapping import (
     FieldMapping,
     FieldMappingBatch,
@@ -68,6 +68,7 @@ from .verification import (
 # Models exported to JSON Schema (and from there to TypeScript/Zod).
 EXPORTED_MODELS = [
     DocumentFact,
+    Derivation,
     FieldMapping,
     FieldMappingBatch,
     UserQuestion,
@@ -96,6 +97,7 @@ __all__ = [  # noqa: RUF022 - grouped by module
     "RunOutcome",
     "HumanTakeoverReason",
     "DocumentFact",
+    "Derivation",
     "FieldMapping",
     "FieldMappingBatch",
     "ModelCallMetadata",

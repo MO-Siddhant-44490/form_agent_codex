@@ -1,0 +1,31 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "description": "Provenance for a value that was computed or inferred rather than read\ndirectly from a document (invariant 11): what operation produced it, from\nwhich source facts, and a human-readable explanation.",
+  "properties": {
+    "explanation": {
+      "title": "Explanation",
+      "type": "string"
+    },
+    "operation": {
+      "title": "Operation",
+      "type": "string"
+    },
+    "source_fact_ids": {
+      "items": {
+        "type": "string"
+      },
+      "minItems": 1,
+      "title": "Source Fact Ids",
+      "type": "array"
+    }
+  },
+  "required": [
+    "operation",
+    "source_fact_ids",
+    "explanation"
+  ],
+  "title": "Derivation",
+  "type": "object",
+  "x-protocol-version": "1.0"
+}

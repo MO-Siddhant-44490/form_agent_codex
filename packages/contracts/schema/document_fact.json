@@ -1,5 +1,34 @@
 {
   "$defs": {
+    "Derivation": {
+      "additionalProperties": false,
+      "description": "Provenance for a value that was computed or inferred rather than read\ndirectly from a document (invariant 11): what operation produced it, from\nwhich source facts, and a human-readable explanation.",
+      "properties": {
+        "explanation": {
+          "title": "Explanation",
+          "type": "string"
+        },
+        "operation": {
+          "title": "Operation",
+          "type": "string"
+        },
+        "source_fact_ids": {
+          "items": {
+            "type": "string"
+          },
+          "minItems": 1,
+          "title": "Source Fact Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "operation",
+        "source_fact_ids",
+        "explanation"
+      ],
+      "title": "Derivation",
+      "type": "object"
+    },
     "FactSource": {
       "additionalProperties": false,
       "description": "Document region a fact was extracted from (provenance, invariant 11).",
@@ -71,7 +100,8 @@
         "extracted",
         "corrected",
         "user_provided",
-        "conflicted"
+        "conflicted",
+        "derived"
       ],
       "title": "FactStatus",
       "type": "string"
@@ -110,6 +140,17 @@
       "minimum": 0.0,
       "title": "Confidence",
       "type": "number"
+    },
+    "derivation": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Derivation"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "fact_id": {
       "title": "Fact Id",

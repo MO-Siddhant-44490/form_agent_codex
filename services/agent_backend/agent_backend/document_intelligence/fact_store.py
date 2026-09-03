@@ -96,7 +96,8 @@ class FactStore:
             usable = [
                 f
                 for f in versions
-                if f.status is FactStatus.EXTRACTED and f.confidence >= MIN_USABLE_CONFIDENCE
+                if f.status in (FactStatus.EXTRACTED, FactStatus.DERIVED)
+                and f.confidence >= MIN_USABLE_CONFIDENCE
             ]
             has_conflict = any(f.status is FactStatus.CONFLICTED for f in versions)
             if usable and not has_conflict:

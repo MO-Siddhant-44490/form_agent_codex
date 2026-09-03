@@ -5,6 +5,7 @@ export { ActionResultSchema, type ActionResult } from "./ActionResult";
 export { ApprovalTokenSchema, type ApprovalToken } from "./ApprovalToken";
 export { BrowserActionSchema, type BrowserAction } from "./BrowserAction";
 export { BudgetStateSchema, type BudgetState } from "./BudgetState";
+export { DerivationSchema, type Derivation } from "./Derivation";
 export { DocumentFactSchema, type DocumentFact } from "./DocumentFact";
 export { EnvelopeSchema, type Envelope } from "./Envelope";
 export { FieldMappingSchema, type FieldMapping } from "./FieldMapping";

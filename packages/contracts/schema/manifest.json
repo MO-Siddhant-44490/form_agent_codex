@@ -5,6 +5,7 @@
     "approval_token.json",
     "browser_action.json",
     "budget_state.json",
+    "derivation.json",
     "document_fact.json",
     "envelope.json",
     "field_mapping.json",

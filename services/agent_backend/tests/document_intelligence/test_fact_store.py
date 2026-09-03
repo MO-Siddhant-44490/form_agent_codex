@@ -73,3 +73,66 @@ def test_correction_of_unseen_key_creates_user_fact():
     fact = store.correct("contact_method", "email")
     assert store.active()["contact_method"] == fact
     assert fact.status is FactStatus.CORRECTED
+
+
+def test_derived_fact_requires_derivation_trace():
+    import pytest
+    from form_contracts import Derivation, DocumentFact, FactStatus
+    from pydantic import ValidationError
+
+    # A derived fact without a trace is rejected (invariant 11).
+    with pytest.raises(ValidationError, match="derivation trace"):
+        DocumentFact(
+            fact_id="d-1",
+            key="age",
+            value="28",
+            value_type="number",
+            confidence=0.95,
+            sensitivity="personal",
+            status=FactStatus.DERIVED,
+        )
+
+    # With a trace it is valid and needs no document source.
+    fact = DocumentFact(
+        fact_id="d-1",
+        key="age",
+        value="28",
+        value_type="number",
+        confidence=0.95,
+        sensitivity="personal",
+        status=FactStatus.DERIVED,
+        derivation=Derivation(
+            operation="age_from_date_of_birth",
+            source_fact_ids=["f-dob"],
+            explanation="today minus DOB",
+        ),
+    )
+    assert fact.source is None
+    assert fact.derivation.source_fact_ids == ["f-dob"]
+
+
+def test_derived_fact_surfaces_as_active():
+    from agent_backend.document_intelligence.fact_store import FactStore
+    from form_contracts import Derivation, DocumentFact, FactStatus
+
+    store = FactStore()
+    store.add(
+        DocumentFact(
+            fact_id="d-age",
+            key="age",
+            value="28",
+            value_type="number",
+            confidence=0.95,
+            sensitivity="personal",
+            status=FactStatus.DERIVED,
+            derivation=Derivation(
+                operation="age_from_date_of_birth",
+                source_fact_ids=["f-dob"],
+                explanation="today - DOB",
+            ),
+        )
+    )
+    # A derived fact is authoritative like an extracted one (regression: it was
+    # computed but dropped from active()).
+    assert store.active()["age"].value == "28"
+    assert store.active()["age"].status is FactStatus.DERIVED

@@ -4,8 +4,14 @@ come from configuration; nothing else in the system knows Bedrock exists."""
 from dataclasses import dataclass
 from typing import Any
 
-from .base import GatewayResult, MappingRequest, ModelUnavailable
-from .json_chat import run_mapping_chat
+from .base import (
+    DerivationRequest,
+    DerivationResult,
+    GatewayResult,
+    MappingRequest,
+    ModelUnavailable,
+)
+from .json_chat import run_derivation_chat, run_mapping_chat
 
 
 @dataclass
@@ -65,3 +71,26 @@ class BedrockModelAdapter:
             return text, usage.get("inputTokens"), usage.get("outputTokens")
 
         return run_mapping_chat(request, self._config.model_id, complete)
+
+    def derive_facts(self, request: DerivationRequest) -> DerivationResult:
+        client = self._ensure_client()
+
+        def complete(system: str, user: str) -> tuple[str, int | None, int | None]:
+            try:
+                response = client.converse(
+                    modelId=self._config.model_id,
+                    system=[{"text": system}],
+                    messages=[{"role": "user", "content": [{"text": user}]}],
+                    inferenceConfig={
+                        "maxTokens": self._config.max_tokens,
+                        "temperature": self._config.temperature,
+                    },
+                )
+            except Exception as error:
+                raise ModelUnavailable(f"bedrock converse failed: {error}") from error
+            content = response["output"]["message"]["content"]
+            text = "".join(part.get("text", "") for part in content)
+            usage = response.get("usage", {})
+            return text, usage.get("inputTokens"), usage.get("outputTokens")
+
+        return run_derivation_chat(request, self._config.model_id, complete)
