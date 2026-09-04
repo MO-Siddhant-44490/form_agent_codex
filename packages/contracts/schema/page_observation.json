@@ -127,6 +127,21 @@
           "default": null,
           "title": "Nearby Text"
         },
+        "option_labels": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Option Labels"
+        },
         "options": {
           "anyOf": [
             {

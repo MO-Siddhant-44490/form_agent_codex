@@ -118,6 +118,9 @@ function baseField(el: Control, fieldId: string): FormField {
     options: el instanceof HTMLSelectElement
       ? Array.from(el.options).map((o) => o.value)
       : null,
+    option_labels: el instanceof HTMLSelectElement
+      ? Array.from(el.options).map((o) => o.textContent?.trim() ?? o.value)
+      : null,
     validation_message: credential ? null : validationMessage(el),
     nearby_text: groupLegend(el),
   };
@@ -155,6 +158,7 @@ function radioGroupField(radios: HTMLInputElement[], name: string): FormField {
     current_value: checked?.value ?? null,
     value_redacted: false,
     options: radios.map((r) => r.value),
+    option_labels: null,
     validation_message: null,
     nearby_text: groupLegend(first),
   };
@@ -201,37 +205,56 @@ export function discoverFields(doc: Document): FormField[] {
 function mergeComboboxes(doc: Document, fields: FormField[]): void {
   for (const combo of detectComboboxes(doc)) {
     const el = combo.element;
+    const backing = combo.backingSelect;
+    // options = the values the executor selects; option_labels = human names,
+    // so the mapper can match a name fact ("Maharashtra") to a code option ("MH").
     const options = combo.options.map((o) => o.value);
-    const id = el.id || `combobox-${fields.length}`;
+    const optionLabels = combo.options.map((o) => o.label || o.value);
+    // Identity comes from the backing <select> when present (its name/id/label
+    // are the real signal for mapping), else from the widget element.
+    const name = backing?.name || el.getAttribute("data-value-input") || null;
+    const label =
+      (backing ? explicitLabel(backing) || accessibleName(backing) : null) ||
+      explicitLabel(el) ||
+      accessibleName(el);
+    const id = backing?.id || el.id || name || `combobox-${fields.length}`;
     const existing = el.id ? fields.find((f) => f.field_id === el.id) : undefined;
     if (existing) {
       existing.input_type = "combobox";
       existing.options = options;
+      existing.option_labels = optionLabels;
       existing.current_value = combo.currentValue;
+      existing.label = label ?? existing.label;
+      existing.accessible_name = label ?? existing.accessible_name;
+      existing.required = existing.required || backing?.required === true;
       existing.target = {
         ...existing.target,
+        field_id: id,
         role: "combobox",
         input_type: "combobox",
-        name_attr: el.getAttribute("data-value-input") ?? existing.target.name_attr,
+        label: label ?? existing.target.label,
+        accessible_name: label ?? existing.target.accessible_name,
+        name_attr: name ?? existing.target.name_attr,
       };
+      existing.field_id = id;
     } else {
       fields.push({
         field_id: id,
         target: {
           field_id: id,
           role: "combobox",
-          accessible_name: accessibleName(el),
+          accessible_name: label,
           input_type: "combobox",
-          label: explicitLabel(el),
-          name_attr: el.getAttribute("data-value-input"),
+          label,
+          name_attr: name,
           autocomplete: null,
           placeholder: el.getAttribute("placeholder"),
           bounding_box: boundingBox(el),
         },
         input_type: "combobox",
-        label: explicitLabel(el),
-        accessible_name: accessibleName(el),
-        required: el.getAttribute("aria-required") === "true",
+        label,
+        accessible_name: label,
+        required: backing?.required === true || el.getAttribute("aria-required") === "true",
         disabled: el.getAttribute("aria-disabled") === "true",
         readonly: false,
         visible: true,
@@ -239,6 +262,7 @@ function mergeComboboxes(doc: Document, fields: FormField[]): void {
         current_value: combo.currentValue,
         value_redacted: false,
         options,
+        option_labels: optionLabels,
         validation_message: null,
         nearby_text: groupLegend(el),
       });
@@ -277,7 +301,7 @@ function mergeDatePickers(doc: Document, fields: FormField[]): void {
         input_type: "date", label: explicitLabel(el), accessible_name: accessibleName(el),
         required: el.getAttribute("aria-required") === "true",
         disabled: false, readonly: false, visible: true, checked: null,
-        current_value: picker.currentValue, value_redacted: false, options: null,
+        current_value: picker.currentValue, value_redacted: false, options: null, option_labels: null,
         validation_message: null, nearby_text: groupLegend(el),
       });
     }

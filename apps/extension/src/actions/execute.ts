@@ -165,7 +165,9 @@ function executeDatePicker(doc: Document, action: BrowserAction): ActionResult {
   const value = action.resolved_value;
   if (value === null || value === undefined) return failed(action, "no resolved value");
   const pickers = detectDatePickers(doc);
-  const picker = pickers.find((p) => p.element.id === action.target!.field_id) ?? pickers[0];
+  const picker =
+    pickers.find((p) => p.element.id === action.target!.field_id) ??
+    (pickers.length === 1 ? pickers[0] : undefined);
   if (!picker) return failed(action, "date picker not found");
 
   const el = picker.element;
@@ -207,8 +209,16 @@ function executeCombobox(doc: Document, action: BrowserAction): ActionResult {
   const value = action.resolved_value;
   if (value === null || value === undefined) return failed(action, "no resolved value");
   const combos = detectComboboxes(doc);
-  const combo = combos.find((c) => c.element.id === action.target!.field_id) ?? combos[0];
-  if (!combo) return failed(action, "combobox not found");
+  const fid = action.target!.field_id;
+  const nm = action.target!.name_attr;
+  const combo =
+    combos.find(
+      (c) =>
+        c.element.id === fid ||
+        c.backingSelect?.id === fid ||
+        (nm !== null && c.backingSelect?.name === nm),
+    ) ?? (combos.length === 1 ? combos[0] : undefined);
+  if (!combo) return failed(action, `combobox not found for ${fid}`);
 
   const el = combo.element;
   const win = elWindow(el);

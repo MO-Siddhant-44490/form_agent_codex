@@ -105,18 +105,22 @@ def _question(
 _PLACEHOLDER_OPTION = ("", "select", "--", "choose", "first")
 
 
-def match_option(value: str, options: list[str]) -> str | None:
-    """Match a fact value to a dropdown option: exact, then
-    case-insensitive/trimmed. Returns the option's exact string (what the
-    executor must click), or None. Deliberately conservative — a loose
-    substring match would wrongly pick e.g. "IN" for "India" or "Manipur" for
-    "Maharashtra"; genuine abbreviation mapping is the model's job."""
+def match_option(value: str, options: list[str], labels: list[str] | None = None) -> str | None:
+    """Match a fact value to a dropdown option and return the option VALUE the
+    executor must select. Matches exact, then case-insensitive/trimmed, against
+    the option values and — when provided — the human labels (so a name fact
+    "Maharashtra" maps to the code option "MH"). Deliberately conservative: no
+    loose substring match (that would pick "IN" for "India")."""
     if value in options:
         return value
     v = value.strip().lower()
     for option in options:
         if option and option.strip().lower() == v:
             return option
+    if labels:
+        for i, label in enumerate(labels):
+            if label and label.strip().lower() == v and i < len(options):
+                return options[i]
     return None
 
 
@@ -126,7 +130,7 @@ def _assign(field: FormField, fact: DocumentFact) -> Assignment | UserQuestion:
     if field.input_type == "checkbox":
         return Assignment(field=field, fact=fact, value=None, checked=desired_checked(fact))
     if field.options:
-        matched = match_option(fact.value, field.options)
+        matched = match_option(fact.value, field.options, field.option_labels)
         if matched is not None:
             return Assignment(field=field, fact=fact, value=matched, checked=None)
         return _question(

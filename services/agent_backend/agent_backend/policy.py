@@ -108,7 +108,10 @@ def check_action(
             # options (a cascading/lazy combobox has none until opened — the
             # executor validates the option at click time). Match tolerantly
             # (case-insensitive) to align with the mapper.
-            if field.options and _match_option(action.resolved_value, field.options) is None:
+            if (
+                field.options
+                and _match_option(action.resolved_value, field.options, field.option_labels) is None
+            ):
                 return _block(
                     action,
                     PolicyRule.UNSUPPORTED_OPTION,

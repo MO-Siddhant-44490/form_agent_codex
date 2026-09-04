@@ -39,7 +39,8 @@ class FormField(StrictModel):
     checked: bool | None = None
     current_value: str | None = None
     value_redacted: bool = False
-    options: list[str] | None = None
+    options: list[str] | None = None  # option values (what the executor selects)
+    option_labels: list[str] | None = None  # human labels, parallel to options
     validation_message: str | None = None
     nearby_text: str | None = None
 
