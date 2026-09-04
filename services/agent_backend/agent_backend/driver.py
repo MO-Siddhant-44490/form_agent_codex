@@ -10,6 +10,7 @@ from form_contracts import (
     BrowserAction,
     DocumentFact,
     ExpectedEffect,
+    FailureClass,
     ModelCallMetadata,
     NavigationControl,
     NavigationKind,
@@ -203,11 +204,32 @@ def run_fill(
     mapping: MappingOutcome | None = None
     mapped_fingerprint: str | None = None
 
+    stability_waits = 0
     while result.steps_used < budgets.max_steps:
         if observation.login_detected or observation.captcha_detected:
             result.outcome = RunOutcome.NEEDS_USER
             result.detail = "login or CAPTCHA present; human takeover required (invariant 2)"
             return result
+
+        # Cascading dropdowns and dynamic fields load asynchronously (e.g.
+        # selecting a country reveals state/district). If the DOM has not
+        # settled, wait for it and re-perceive before mapping/acting, so
+        # dependent fields and their options are present. Bounded per settle
+        # cycle; reset once stable.
+        if not observation.dom_stable and stability_waits < 3:
+            stability_waits += 1
+            sequence += 1
+            transport.execute(
+                _helper_action(observation, session, ActionKind.WAIT_FOR_STABLE_PAGE, sequence)
+            )
+            result.steps_used += 1
+            new_obs = transport.observe()
+            # Re-map when the settled page differs (new/changed fields).
+            if new_obs.page_fingerprint != observation.page_fingerprint:
+                mapping = None
+            observation = new_obs
+            continue
+        stability_waits = 0
 
         # Dismiss a blocking dialog / cookie banner before interacting with
         # the form. Bounded: each dialog is tried at most twice, then left
@@ -378,18 +400,38 @@ def run_fill(
             observation = transport.observe()
             continue
         if outcome.result.status == "FAILED":
-            # A field we cannot fill (e.g. an undriveable custom widget) is
-            # blocked and reported — the run finishes NEEDS_USER after filling
-            # everything else, rather than crashing on one field.
-            blocked_fields.add(field_id)
-            result.questions.append(
-                UserQuestion(
-                    question_id=f"q-failed-{field_id}",
-                    kind=QuestionKind.AMBIGUOUS_MAPPING,
-                    prompt=f"Could not fill {field_id} ({outcome.result.error}); please do it manually.",
-                    field_id=field_id,
+            # A failed action goes through bounded recovery, favouring a
+            # wait-then-reobserve: a cascading dropdown's options may still be
+            # loading (e.g. district after state). Only after the ladder is
+            # exhausted is the field blocked and reported for manual handling —
+            # the run never crashes on one field.
+            decision = recovery.plan(field_id, FailureClass.NAVIGATION_FAILED)
+            result.recovery_decisions.append(decision)
+            retries[field_id] = retries.get(field_id, 0) + 1
+            if decision.strategy is RecoveryStrategy.STOP:
+                blocked_fields.add(field_id)
+                result.questions.append(
+                    UserQuestion(
+                        question_id=f"q-failed-{field_id}",
+                        kind=QuestionKind.AMBIGUOUS_MAPPING,
+                        prompt=(
+                            f"Could not fill {field_id} ({outcome.result.error}); "
+                            "please do it manually."
+                        ),
+                        field_id=field_id,
+                    )
                 )
-            )
+                observation = transport.observe()
+                continue
+            if decision.strategy is RecoveryStrategy.WAIT_STABLE:
+                sequence += 1
+                transport.execute(
+                    _helper_action(observation, session, ActionKind.WAIT_FOR_STABLE_PAGE, sequence)
+                )
+                result.steps_used += 1
+            # WAIT_STABLE / REOBSERVE: re-observe (options may now be loaded),
+            # re-map, and the loop re-attempts the field with a fresh key.
+            mapping = None
             observation = transport.observe()
             continue
 

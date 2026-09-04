@@ -39,7 +39,7 @@ if (!window.__formAgentContent) {
     return { ok: true, observation };
   }
 
-  async function waitForStablePage(timeoutMs = 3000): Promise<void> {
+  async function waitForStablePage(timeoutMs = 8000): Promise<void> {
     const start = Date.now();
     while (!stability.isStable() && Date.now() - start < timeoutMs) {
       await new Promise((resolve) => setTimeout(resolve, 100));
