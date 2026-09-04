@@ -74,3 +74,28 @@ explicit permission). To run against an external site:
 Verified live on https://httpbin.org/forms/post: perception found all 10
 fields; Bedrock mapped custname/custtel/custemail to full_name/phone/email;
 zero unsafe proposals; the page was not modified.
+
+
+## Model comparison baseline (live Bedrock, ap-south-1)
+
+8 provider-neutral mapping cases, recorded 2026-09-04:
+
+| Model | Mapping acc | Option acc | Unsafe | Schema fail | Median latency | Output tokens |
+| --- | --- | --- | --- | --- | --- | --- |
+| APAC Claude Sonnet 4 | 0.90 | 1.00 | 0 | 0 | 3236 ms | 1038 |
+| APAC Claude 3.7 Sonnet | 0.90 | 1.00 | 0 | 0 | 2102 ms | 933 |
+| APAC Claude 3.5 Sonnet v2 | 0.90 | 1.00 | 0 | 0 | 2534 ms | 1013 |
+| APAC Claude 3 Haiku | 0.70 | 1.00 | 0 | 0 | 1259 ms | 843 |
+
+The Sonnet-class models tie at 0.90 mapping accuracy (3.7 Sonnet is the fastest
+of them); Haiku is fastest but drops to 0.70. Every model produced zero unsafe
+mappings — the deterministic policy gate holds regardless of model choice.
+
+## Live-site validation achieved (httpbin.org/forms/post)
+
+- Level 3 (shadow / propose-only): perception found all 10 fields; Bedrock
+  mapped custname/custtel/custemail to full_name/phone/email; 0 unsafe
+  proposals; page unmodified.
+- Level 4 (supervised fill): the closed loop filled and verified the 3 mapped
+  fields on the live page (all verifications SUCCESS) and STOPPED before
+  submission — no SUBMIT issued, nothing sent.
