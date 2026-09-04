@@ -49,6 +49,7 @@ class FormFillState(TypedDict, total=False):
     sequence: int
     steps_used: int
     retries: dict[str, int]
+    recovery_history: dict[str, list[str]]
     blocked_fields: list[str]
     filled_fields: list[str]
     questions: list[UserQuestion]

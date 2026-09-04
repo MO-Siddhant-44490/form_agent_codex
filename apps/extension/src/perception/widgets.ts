@@ -142,3 +142,47 @@ export function findDateCell(grid: HTMLElement, iso: string): HTMLElement | null
   }
   return null;
 }
+
+
+// -- date picker month navigation ------------------------------------------
+
+/** The year+month currently shown in a calendar grid, inferred from the mode
+ * of its day cells' dates (ignoring leading/trailing days of adjacent months). */
+export function shownMonth(grid: HTMLElement): { year: number; month: number } | null {
+  const counts = new Map<string, number>();
+  for (const cell of deepQueryAll<HTMLElement>(grid, "[role='gridcell'], [data-date], td, button")) {
+    const iso = cell.getAttribute("data-date") ?? cell.getAttribute("data-value") ?? parseCellDate(cell.getAttribute("aria-label") ?? cell.textContent ?? "");
+    if (!iso) continue;
+    const ym = iso.slice(0, 7); // yyyy-mm
+    counts.set(ym, (counts.get(ym) ?? 0) + 1);
+  }
+  let best: string | null = null;
+  let bestN = 0;
+  for (const [ym, n] of counts) {
+    if (n > bestN) {
+      best = ym;
+      bestN = n;
+    }
+  }
+  if (!best) return null;
+  const [y, m] = best.split("-");
+  return { year: Number(y), month: Number(m) };
+}
+
+const PREV_MONTH_RE = /\b(previous|prev|back|last)\b/i;
+const NEXT_MONTH_RE = /\b(next|forward|following)\b/i;
+
+/** Previous/next month buttons within a date picker's container. */
+export function findMonthNav(picker: HTMLElement): {
+  prev: HTMLElement | null;
+  next: HTMLElement | null;
+} {
+  const container = picker.closest("[data-datepicker], .datepicker") ?? picker.parentElement ?? picker;
+  const buttons = deepQueryAll<HTMLElement>(container, "button, [role='button'], a").filter(isVisible);
+  const label = (el: HTMLElement) =>
+    `${el.getAttribute("aria-label") ?? ""} ${el.className} ${el.textContent ?? ""}`;
+  return {
+    prev: buttons.find((b) => PREV_MONTH_RE.test(label(b))) ?? null,
+    next: buttons.find((b) => NEXT_MONTH_RE.test(label(b))) ?? null,
+  };
+}

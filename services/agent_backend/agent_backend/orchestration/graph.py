@@ -15,8 +15,11 @@ from form_contracts import (
     BrowserAction,
     ExpectedEffect,
     PolicyDecisionKind,
+    QuestionKind,
+    RecoveryStrategy,
     RiskLevel,
     RunOutcome,
+    UserQuestion,
     VerificationStatus,
 )
 from langgraph.checkpoint.memory import MemorySaver
@@ -27,11 +30,11 @@ from langgraph.types import interrupt
 from ..mapper import Assignment, DeterministicMapper, Mapper, MappingOutcome
 from ..planner import assignment_satisfied, build_action_for
 from ..policy import check_action
+from ..recovery import next_strategy
 from ..transport import BrowserTransport
 from .state import FormFillState, PlannedAssignment
 
 MAX_STEPS = 60
-MAX_RETRIES = 2
 
 
 def _assignment_from_state(pa: PlannedAssignment, observation) -> Assignment | None:
@@ -58,6 +61,7 @@ def build_form_fill_graph(
             "sequence": 0,
             "steps_used": 0,
             "retries": {},
+            "recovery_history": {},
             "blocked_fields": [],
             "filled_fields": [],
             "questions": [],
@@ -182,18 +186,68 @@ def build_form_fill_graph(
                 retries = dict(state.get("retries", {}))
                 retries.pop(field_id, None)
                 updates["retries"] = retries
+                history = {k: list(v) for k, v in state.get("recovery_history", {}).items()}
+                history.pop(field_id, None)
+                updates["recovery_history"] = history
             elif verification.status in (
                 VerificationStatus.RETRYABLE_FAILURE,
                 VerificationStatus.NEEDS_REPERCEPTION,
             ):
+                # Bounded recovery, shared with the driver: pick the next
+                # strategy from the failure ladder. History is checkpointed in
+                # state, so recovery survives a crash/resume.
+                history = {k: list(v) for k, v in state.get("recovery_history", {}).items()}
+                used = [RecoveryStrategy(v) for v in history.get(field_id, [])]
+                strategy = next_strategy(verification.failure_class, used)
                 retries = dict(state.get("retries", {}))
                 retries[field_id] = retries.get(field_id, 0) + 1
                 updates["retries"] = retries
-                if retries[field_id] > MAX_RETRIES:
-                    updates.update(
-                        outcome=RunOutcome.BUDGET_EXHAUSTED.value,
-                        detail=f"retry budget exhausted on {field_id}",
+                if strategy is not RecoveryStrategy.STOP:
+                    history.setdefault(field_id, []).append(strategy.value)
+                updates["recovery_history"] = history
+                if strategy in (RecoveryStrategy.STOP, RecoveryStrategy.ASK_USER):
+                    # Block the field and record a question; the run finishes
+                    # NEEDS_USER after filling everything else (never loops).
+                    updates["blocked_fields"] = [*state.get("blocked_fields", []), field_id]
+                    updates["questions"] = [
+                        *state.get("questions", []),
+                        UserQuestion(
+                            question_id=f"q-recover-{field_id}",
+                            kind=(
+                                QuestionKind.LOW_CONFIDENCE
+                                if strategy is RecoveryStrategy.ASK_USER
+                                else QuestionKind.AMBIGUOUS_MAPPING
+                            ),
+                            prompt=(
+                                f"Could not fill {field_id} "
+                                f"({verification.failure_class}); needs your input."
+                            ),
+                            field_id=field_id,
+                        ),
+                    ]
+                elif strategy in (RecoveryStrategy.SCROLL, RecoveryStrategy.WAIT_STABLE):
+                    helper_kind = (
+                        ActionKind.SCROLL
+                        if strategy is RecoveryStrategy.SCROLL
+                        else ActionKind.WAIT_FOR_STABLE_PAGE
                     )
+                    seq = state["sequence"] + 1
+                    transport.execute(
+                        BrowserAction(
+                            action_id=f"{state['run_id']}:{helper_kind.value.lower()}-{seq}",
+                            run_id=state["run_id"],
+                            tab_id=state["tab_id"],
+                            origin=state["origin"],
+                            sequence_number=seq,
+                            kind=helper_kind,
+                            source_observation_seq=obs.observation_seq
+                            if (obs := state.get("observation"))
+                            else None,
+                        )
+                    )
+                    updates["sequence"] = seq
+                # RETRY / REOBSERVE: the graph re-perceives and re-attempts the
+                # still-unsatisfied field with the bumped attempt (fresh key).
             elif verification.status is VerificationStatus.NEEDS_USER:
                 updates.update(
                     outcome=RunOutcome.NEEDS_USER.value, detail="verification requests takeover"

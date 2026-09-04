@@ -29,6 +29,27 @@ _DEFAULT_LADDER = [S.REOBSERVE, S.RETRY, S.STOP]
 MAX_RECOVERIES_PER_FIELD = 5
 
 
+def next_strategy(
+    failure_class: FailureClass | None, used: list[RecoveryStrategy]
+) -> RecoveryStrategy:
+    """The next bounded strategy given the failure and the strategies already
+    tried for this field. Pure: callers hold the `used` history (the driver in
+    memory, the graph in checkpointed state), so recovery survives a restart."""
+    if len(used) >= MAX_RECOVERIES_PER_FIELD:
+        return S.STOP
+    ladder = _LADDERS.get(failure_class, _DEFAULT_LADDER) if failure_class else _DEFAULT_LADDER
+    for strategy in ladder:
+        if strategy not in used:
+            return strategy
+    return S.STOP
+
+
+def _reason(failure_class: FailureClass | None, strategy: RecoveryStrategy) -> str:
+    if strategy is S.STOP:
+        return "ladder exhausted"
+    return f"ladder step for {failure_class.value if failure_class else 'unknown'}"
+
+
 @dataclass
 class RecoveryDecision:
     field_id: str

@@ -2,7 +2,13 @@
 // action to the live DOM. No model output executes directly (invariant 5);
 // every mutation goes through framework-compatible native events.
 import type { ActionResult, BrowserAction } from "@form-agent/contracts";
-import { detectComboboxes, detectDatePickers, findDateCell } from "../perception/widgets";
+import {
+  detectComboboxes,
+  detectDatePickers,
+  findDateCell,
+  findMonthNav,
+  shownMonth,
+} from "../perception/widgets";
 import { deepQueryAll } from "../perception/shadow";
 import { elWindow, isFormControl, isInputEl, isSelectEl } from "./dom-types";
 import { fireInputEvents, focusThen, setNativeValue } from "./events";
@@ -169,11 +175,30 @@ function executeDatePicker(doc: Document, action: BrowserAction): ActionResult {
   el.click();
   el.setAttribute("aria-expanded", "true");
 
-  const fresh = detectDatePickers(doc).find((p) => p.element === el) ?? picker;
-  const grid = fresh.grid;
+  const gridOf = () => detectDatePickers(doc).find((p) => p.element === el)?.grid ?? null;
+  let grid = gridOf();
   if (!grid) return failed(action, "date picker has no calendar grid");
-  const cell = findDateCell(grid, value);
-  if (!cell) return failed(action, `no calendar cell for ${value} (month navigation needed)`);
+
+  let cell = findDateCell(grid, value);
+  if (!cell) {
+    // Navigate months toward the target, bounded, re-scanning after each click
+    // (the grid usually re-renders).
+    const [ty, tm] = [Number(value.slice(0, 4)), Number(value.slice(5, 7))];
+    const nav = findMonthNav(el);
+    for (let guard = 0; guard < 36 && !cell; guard++) {
+      grid = gridOf();
+      if (!grid) break;
+      cell = findDateCell(grid, value);
+      if (cell) break;
+      const shown = shownMonth(grid);
+      if (!shown) break;
+      const delta = (ty - shown.year) * 12 + (tm - shown.month);
+      const btn = delta > 0 ? nav.next : delta < 0 ? nav.prev : null;
+      if (!btn) break;
+      btn.click();
+    }
+  }
+  if (!cell) return failed(action, `no calendar cell for ${value} after month navigation`);
   cell.click();
   return result(action, "EXECUTED");
 }

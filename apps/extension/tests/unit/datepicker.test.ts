@@ -44,3 +44,30 @@ describe("date picker detection", () => {
     expect(parseCellDate("not a date")).toBeNull();
   });
 });
+
+import { findMonthNav, shownMonth } from "../../src/perception/widgets";
+
+describe("date picker month navigation helpers", () => {
+  it("infers the shown month from the mode of cell dates", () => {
+    document.body.innerHTML = `
+      <div id="cal" role="grid">
+        <button role="gridcell" data-date="1998-03-31">31</button>
+        <button role="gridcell" data-date="1998-04-01">1</button>
+        <button role="gridcell" data-date="1998-04-15">15</button>
+        <button role="gridcell" data-date="1998-04-30">30</button>
+      </div>`;
+    expect(shownMonth(document.getElementById("cal")!)).toEqual({ year: 1998, month: 4 });
+  });
+
+  it("finds previous/next month buttons by aria-label", () => {
+    document.body.innerHTML = `
+      <div class="datepicker" data-datepicker>
+        <input id="dob" role="combobox">
+        <button id="p" aria-label="Previous month">‹</button>
+        <button id="n" aria-label="Next month">›</button>
+      </div>`;
+    const nav = findMonthNav(document.getElementById("dob")!);
+    expect(nav.prev?.id).toBe("p");
+    expect(nav.next?.id).toBe("n");
+  });
+});

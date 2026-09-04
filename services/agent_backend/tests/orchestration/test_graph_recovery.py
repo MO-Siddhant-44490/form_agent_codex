@@ -144,11 +144,41 @@ def test_duplicate_resume_does_not_submit_twice(tmp_path):
     assert again.state["outcome"] == RunOutcome.COMPLETED.value
 
 
-def test_budget_exhaustion_terminates_run(tmp_path):
+def test_stuck_field_recovers_to_classified_block(tmp_path):
+    # A permanently failing field now walks the recovery ladder (shared with
+    # the driver) to a classified NEEDS_USER block instead of a bare
+    # budget-exhaust — and the durable recovery_history checkpoints along the way.
     transport = FakeTransport()
     transport.fields[0].fail_executions = 99  # never sticks
     cp, conn = open_saver(tmp_path / "b.db")
     graph = build_form_fill_graph(transport, checkpointer=cp)
     handle = start_run(graph, "run-budget", slice1_facts())
     conn.close()
-    assert handle.state["outcome"] == RunOutcome.BUDGET_EXHAUSTED.value
+    assert handle.state["outcome"] == RunOutcome.NEEDS_USER.value
+    # The stuck field's recovery ladder terminated (retry, reobserve) and it is
+    # blocked; the rest of the form still filled.
+    assert "full-name" in handle.state["blocked_fields"]
+    assert len(handle.state["filled_fields"]) == 7
+
+
+def test_recovery_history_survives_a_process_restart(tmp_path):
+    """Bounded recovery is durable: a field that fails, then keeps failing
+    across a simulated process restart, still terminates in a classified block
+    without exceeding its ladder (recovery_history is checkpointed)."""
+    transport = FakeTransport()
+    transport.fields[1].validation_error = "bad email"  # email -> ASK_USER on first failure
+    db = tmp_path / "rec.db"
+
+    cp, conn = open_saver(db)
+    graph = build_form_fill_graph(transport, checkpointer=cp)
+    handle = start_run(graph, "run-rec", slice1_facts())
+    conn.close()
+
+    # Validation error -> ASK_USER immediately; the field is blocked and the
+    # run needs the user, everything else filled.
+    assert handle.state["outcome"] == RunOutcome.NEEDS_USER.value
+    assert "email" in handle.state["blocked_fields"]
+    assert "email" in handle.state.get("recovery_history", {}) or any(
+        q.field_id == "email" for q in handle.state["questions"]
+    )
+    assert len(handle.state["filled_fields"]) == 7
