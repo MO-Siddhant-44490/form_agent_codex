@@ -20,9 +20,12 @@ from ..transport import ExecuteOutcome
 
 
 class ExtensionPlaywrightTransport:
-    def __init__(self, extension_dist: Path, fixture_url: str) -> None:
+    def __init__(
+        self, extension_dist: Path, fixture_url: str, extra_args: list[str] | None = None
+    ) -> None:
         self._extension_dist = extension_dist
         self._fixture_url = fixture_url
+        self._extra_args = extra_args or []
         self._pw: Any = None
         self._context: Any = None
         self._worker: Any = None
@@ -37,6 +40,7 @@ class ExtensionPlaywrightTransport:
             args=[
                 f"--disable-extensions-except={self._extension_dist}",
                 f"--load-extension={self._extension_dist}",
+                *self._extra_args,
             ],
         )
         workers = self._context.service_workers

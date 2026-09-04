@@ -57,3 +57,20 @@ AWS_PROFILE=dev uv run python evals/runners/run_model_comparison.py \
 
 Runs the mapping cases across each model and reports accuracy, option accuracy,
 unsafe mappings, schema failures, latency, and token usage side by side.
+
+## Live-site shadow mode (authorized sites only)
+
+Shadow mode is side-effect-free, so it is safe on any page you are authorized
+to test (public automation-practice sites, owned/sandbox sites, or forms with
+explicit permission). To run against an external site:
+
+1. Add the site's host to a DEV extension build's `host_permissions` (not
+   `<all_urls>` — just that domain), then `pnpm --filter @form-agent/extension build`.
+2. Use `ExtensionPlaywrightTransport(..., extra_args=["--ignore-certificate-errors"])`
+   if behind a TLS-inspecting corporate proxy.
+3. `propose_plan(transport, facts, mapper=ModelAssistedMapper(bedrock))` — it
+   observes and proposes only; it never executes or navigates.
+
+Verified live on https://httpbin.org/forms/post: perception found all 10
+fields; Bedrock mapped custname/custtel/custemail to full_name/phone/email;
+zero unsafe proposals; the page was not modified.
