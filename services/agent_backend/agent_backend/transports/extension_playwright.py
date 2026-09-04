@@ -21,11 +21,20 @@ from ..transport import ExecuteOutcome
 
 class ExtensionPlaywrightTransport:
     def __init__(
-        self, extension_dist: Path, fixture_url: str, extra_args: list[str] | None = None
+        self,
+        extension_dist: Path,
+        fixture_url: str,
+        extra_args: list[str] | None = None,
+        headless: bool = True,
+        slow_mo: int = 0,
+        record_video_dir: str | None = None,
     ) -> None:
         self._extension_dist = extension_dist
         self._fixture_url = fixture_url
         self._extra_args = extra_args or []
+        self._headless = headless
+        self._slow_mo = slow_mo
+        self._record_video_dir = record_video_dir
         self._pw: Any = None
         self._context: Any = None
         self._worker: Any = None
@@ -34,14 +43,21 @@ class ExtensionPlaywrightTransport:
         from playwright.sync_api import sync_playwright
 
         self._pw = sync_playwright().start()
-        self._context = self._pw.chromium.launch_persistent_context(
-            tempfile.mkdtemp(prefix="fa-ext-py-"),
-            channel="chromium",
-            args=[
+        context_kwargs: dict = {
+            "channel": "chromium",
+            "headless": self._headless,
+            "slow_mo": self._slow_mo,
+            "args": [
                 f"--disable-extensions-except={self._extension_dist}",
                 f"--load-extension={self._extension_dist}",
                 *self._extra_args,
             ],
+        }
+        if self._record_video_dir:
+            context_kwargs["record_video_dir"] = self._record_video_dir
+            context_kwargs["viewport"] = {"width": 1000, "height": 900}
+        self._context = self._pw.chromium.launch_persistent_context(
+            tempfile.mkdtemp(prefix="fa-ext-py-"), **context_kwargs
         )
         workers = self._context.service_workers
         self._worker = workers[0] if workers else self._context.wait_for_event("serviceworker")
