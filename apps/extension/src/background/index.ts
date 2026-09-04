@@ -196,20 +196,40 @@ async function attachActiveTab(): Promise<SessionState> {
 // worker answers its observe/execute requests against the real tab and relays
 // the result to the side panel.
 async function fillViaBackend(facts: unknown[], backendUrl: string): Promise<void> {
+  const fail = (error: string) =>
+    chrome.runtime.sendMessage({ type: "FA_FILL_DONE", result: { type: "fill_error", error } });
+
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id || !tab.url) {
-    chrome.runtime.sendMessage({ type: "FA_FILL_DONE", result: { type: "fill_error", error: "no active tab" } });
+    fail("No active tab. Open the form in a tab first.");
     return;
   }
-  await attachToTab(tab.id, tab.url);
+  if (!/^https?:/.test(tab.url)) {
+    fail(`Cannot attach to ${tab.url} — open a normal web page with a form.`);
+    return;
+  }
+  try {
+    await attachToTab(tab.id, tab.url);
+  } catch (e) {
+    fail(`Could not attach to this tab: ${e instanceof Error ? e.message : String(e)}`);
+    return;
+  }
 
   // Create a backend run and align this session's run id with it (so the
   // driver's actions pass the run/tab/origin guards).
-  const runResp = await fetch(`${backendUrl}/runs`, { method: "POST" });
-  const { run_id, session_token } = (await runResp.json()) as {
-    run_id: string;
-    session_token: string;
-  };
+  let run_id: string;
+  let session_token: string;
+  try {
+    const runResp = await fetch(`${backendUrl}/runs`, { method: "POST" });
+    if (!runResp.ok) {
+      fail(`Backend returned ${runResp.status}. Is it running at ${backendUrl}?`);
+      return;
+    }
+    ({ run_id, session_token } = await runResp.json());
+  } catch {
+    fail(`Cannot reach the backend at ${backendUrl}. Start it: uv run python -m agent_backend.api.server`);
+    return;
+  }
   state.runId = run_id;
 
   const wsUrl = `${backendUrl.replace(/^http/, "ws")}/ws/${run_id}?token=${session_token}`;
