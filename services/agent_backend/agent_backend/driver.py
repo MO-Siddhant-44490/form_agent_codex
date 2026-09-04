@@ -172,7 +172,15 @@ def run_fill(
     budgets: DriverBudgets | None = None,
     mapper: Mapper | None = None,
     uploads: dict[str, UploadFileRef] | None = None,
+    *,
+    verify: bool = True,
+    recover: bool = True,
 ) -> DriveResult:
+    """`verify` and `recover` are ablation switches (plan.md §17), both on by
+    default. verify=False runs open-loop (trust the executor, skip
+    verification) — used to measure the value of the perceive-act-verify loop.
+    recover=False disables bounded recovery (a failure blocks the field
+    immediately) — used to measure recovery's contribution."""
     """Fill every approved-mappable field on the attached page, verifying
     each action. Never submits (invariant 1)."""
     budgets = budgets or DriverBudgets()
@@ -377,6 +385,14 @@ def run_fill(
             result.verifications.append(verification)
         observation = outcome.observation or transport.observe()
 
+        # Open-loop ablation (verify=False): trust the executor's EXECUTED and
+        # move on, ignoring the verification result. This is how the value of
+        # the perceive-act-verify loop is measured — a false success here is
+        # exactly what the closed loop catches.
+        if not verify:
+            result.filled_fields.append(field_id)
+            continue
+
         if verification is None:
             continue
         if verification.status is VerificationStatus.SUCCESS:
@@ -388,6 +404,19 @@ def run_fill(
             VerificationStatus.RETRYABLE_FAILURE,
             VerificationStatus.NEEDS_REPERCEPTION,
         ):
+            # No-recovery ablation: a failure blocks the field immediately.
+            if not recover:
+                blocked_fields.add(field_id)
+                result.questions.append(
+                    UserQuestion(
+                        question_id=f"q-norecover-{field_id}",
+                        kind=QuestionKind.AMBIGUOUS_MAPPING,
+                        prompt=f"Could not fill {field_id} (recovery disabled).",
+                        field_id=field_id,
+                    )
+                )
+                observation = transport.observe()
+                continue
             # Bounded recovery: pick the next strategy from the failure ladder.
             decision = recovery.plan(field_id, verification.failure_class)
             result.recovery_decisions.append(decision)
