@@ -74,6 +74,15 @@ def _start_fill(st, session, loop, fact_items, send) -> None:
                     {"field_id": q.field_id, "kind": q.kind.value, "prompt": q.prompt}
                     for q in result.questions
                 ],
+                "validation_issues": [
+                    {
+                        "field_id": i.field_id,
+                        "kind": i.kind.value,
+                        "label": i.label,
+                        "detail": i.detail,
+                    }
+                    for i in result.validation.issues
+                ],
                 "detail": result.detail,
             }
         except Exception as error:  # surface failures to the panel

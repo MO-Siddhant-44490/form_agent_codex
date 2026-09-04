@@ -57,9 +57,43 @@ function descriptor(el: Control, fieldId: string): TargetDescriptor {
   };
 }
 
+function customValidationError(el: Control): string | null {
+  // Custom validators (frameworks, jQuery Validate, ASP.NET, etc.) show the
+  // message in a separate element, not el.validationMessage. Look for:
+  // aria-describedby, aria-errormessage, or a nearby error element with text.
+  const root = el.getRootNode() as Document | ShadowRoot;
+  const byId = (id: string): Element | null =>
+    root instanceof Document ? root.getElementById(id) : root.querySelector(`[id="${id}"]`);
+  for (const attr of ["aria-errormessage", "aria-describedby"]) {
+    const ref = el.getAttribute(attr);
+    if (ref) {
+      for (const id of ref.split(/\s+/)) {
+        const node = byId(id);
+        const text = node?.textContent?.trim();
+        if (text && node && node.getAttribute("aria-hidden") !== "true") return text;
+      }
+    }
+  }
+  // A sibling/nearby element flagged as an error, with visible text.
+  const container = el.closest("div, p, td, li, label, fieldset") ?? el.parentElement;
+  const err = container?.querySelector(
+    "[class*='error' i], [class*='invalid' i], [role='alert'], .field-validation-error",
+  );
+  if (err instanceof HTMLElement && isVisible(err)) {
+    const text = err.textContent?.trim();
+    if (text) return text;
+  }
+  return null;
+}
+
 function validationMessage(el: Control): string | null {
-  // Deterministic local validity: only report once the user/agent has put a
-  // value in (empty required fields are "not yet filled", not "invalid").
+  // aria-invalid marks a field the site considers invalid regardless of value.
+  const ariaInvalid = el.getAttribute("aria-invalid") === "true";
+  const custom = customValidationError(el);
+  if (custom) return custom;
+  if (ariaInvalid) return "field marked invalid";
+  // Deterministic local validity: only report once a value is in (an empty
+  // required field is "not yet filled", not "invalid").
   if (el.value === "" || el.checkValidity()) return null;
   return el.validationMessage || null;
 }

@@ -212,6 +212,24 @@ function executeCombobox(doc: Document, action: BrowserAction): ActionResult {
 
   const el = combo.element;
   const win = elWindow(el);
+
+  // Custom dropdowns (Select2/Chosen/selectize) are backed by a hidden native
+  // <select>. Drive that directly: set its value and fire change — this also
+  // triggers the site's onchange (e.g. cascading state -> district).
+  if (combo.backingSelect) {
+    const select = combo.backingSelect;
+    const target = value.trim().toLowerCase();
+    const match =
+      Array.from(select.options).find((o) => o.value === value) ??
+      Array.from(select.options).find((o) => o.value.trim().toLowerCase() === target) ??
+      Array.from(select.options).find((o) => (o.textContent?.trim().toLowerCase() ?? "") === target);
+    if (!match) return failed(action, `no option ${value} in backing select`);
+    setNativeValue(select, match.value);
+    select.dispatchEvent(new win.Event("input", { bubbles: true }));
+    select.dispatchEvent(new win.Event("change", { bubbles: true }));
+    return result(action, "EXECUTED");
+  }
+
   // Open the popup (focus + click) so the listbox renders.
   el.dispatchEvent(new win.FocusEvent("focus", { bubbles: false }));
   if (typeof el.focus === "function") el.focus();

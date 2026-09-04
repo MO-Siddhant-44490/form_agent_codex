@@ -115,6 +115,18 @@ chrome.runtime.onMessage.addListener((msg: Record<string, unknown>) => {
       div.innerHTML = `<b>${esc(q.field_id)}</b>${esc(q.prompt)}`;
       questionsEl.appendChild(div);
     }
+    const issues = (result.validation_issues as { field_id: string; label?: string; detail: string }[]) ?? [];
+    for (const iss of issues) {
+      const div = document.createElement("div");
+      div.className = "q";
+      div.style.background = "#fde2e1";
+      div.style.borderColor = "#f0a8a4";
+      div.innerHTML = `<b>⚠ ${esc(iss.label || iss.field_id)}</b>${esc(iss.detail)}`;
+      questionsEl.appendChild(div);
+    }
+    if (outcome === "NEEDS_USER" && issues.length > 0) {
+      setStatus(`Filled ${filled.length} fields. ${questions.length + issues.length} item(s) need you (incl. ${issues.length} validation issue(s)). Nothing submitted.`, "warn");
+    }
   }
 });
 

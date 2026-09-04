@@ -33,6 +33,7 @@ from .planner import assignment_satisfied, build_action_for
 from .policy import check_action
 from .recovery import RecoveryDecision, RecoveryPlanner
 from .transport import BrowserTransport
+from .validation import ValidationReport, validate_form
 
 
 @dataclass
@@ -54,6 +55,7 @@ class DriveResult:
     questions: list[UserQuestion] = field(default_factory=list)
     policy_decisions: list[PolicyDecision] = field(default_factory=list)
     recovery_decisions: list[RecoveryDecision] = field(default_factory=list)
+    validation: ValidationReport = field(default_factory=ValidationReport)
     model_calls: list[ModelCallMetadata] = field(default_factory=list)
     detail: str | None = None
 
@@ -308,7 +310,7 @@ def run_fill(
             visited_pages.add(observation.page_fingerprint)
             nav = _find_next_control(observation)
             if nav is None:
-                return _finish(result, mapping, blocked_fields)
+                return _finish(result, mapping, blocked_fields, transport, verify)
             if len(visited_pages) > budgets.max_pages:
                 result.outcome = RunOutcome.BUDGET_EXHAUSTED
                 result.detail = f"page budget ({budgets.max_pages}) exhausted"
@@ -319,7 +321,7 @@ def run_fill(
             decision = check_action(nav_action, observation, {})
             result.policy_decisions.append(decision)
             if decision.decision is PolicyDecisionKind.BLOCK:
-                return _finish(result, mapping, blocked_fields)
+                return _finish(result, mapping, blocked_fields, transport, verify)
 
             nav_outcome = transport.execute(nav_action)
             result.steps_used += 1
@@ -335,7 +337,7 @@ def run_fill(
             ):
                 # Navigation did not reach a new page: stop rather than loop.
                 result.detail = "navigation did not advance to a new page"
-                return _finish(result, mapping, blocked_fields)
+                return _finish(result, mapping, blocked_fields, transport, verify)
             observation = new_observation
             continue
 
@@ -486,21 +488,43 @@ def run_fill(
     return result
 
 
-def _finish(result: DriveResult, mapping: MappingOutcome, blocked_fields: set[str]) -> DriveResult:
+def _finish(
+    result: DriveResult,
+    mapping: MappingOutcome,
+    blocked_fields: set[str],
+    transport: BrowserTransport,
+    verify: bool = True,
+) -> DriveResult:
     result.unmapped_required = [
         q.field_id
         for q in result.questions
         if q.kind is QuestionKind.MISSING_FACT and q.field_id is not None
     ]
-    if result.questions or blocked_fields:
+
+    # Final validation pass (the "validating agent"): re-observe the whole form
+    # and collect every remaining problem — lingering validation errors,
+    # required-empty fields, fields that did not retain a value. Catches
+    # form-level issues a per-field check cannot (e.g. an address-length rule).
+    # Part of verification, so the open-loop (verify=False) ablation skips it.
+    report = (
+        validate_form(transport.observe(), set(result.filled_fields))
+        if verify
+        else ValidationReport()
+    )
+    result.validation = report
+
+    has_problems = bool(result.questions or blocked_fields or report.issues)
+    if has_problems:
         result.outcome = RunOutcome.NEEDS_USER
         parts = []
         if result.questions:
             parts.append(f"{len(result.questions)} clarification question(s)")
         if blocked_fields:
             parts.append(f"{len(blocked_fields)} policy-blocked field(s)")
+        if report.issues:
+            parts.append(f"{len(report.issues)} validation issue(s)")
         result.detail = "; ".join(parts) + "; everything else filled and verified"
     else:
         result.outcome = RunOutcome.COMPLETED
-        result.detail = "all mappable fields filled and verified; submission not attempted"
+        result.detail = "all fields filled and validated; submission not attempted"
     return result

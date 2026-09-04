@@ -8,9 +8,28 @@ import { isVisible } from "./visibility";
 export type ComboboxInfo = {
   element: HTMLElement;
   listbox: HTMLElement | null;
+  backingSelect: HTMLSelectElement | null; // Select2/Chosen/selectize hidden <select>
   options: { value: string; label: string }[];
   currentValue: string | null;
 };
+
+/** A custom dropdown (Select2, Chosen, selectize) is backed by a hidden native
+ * <select>. Find it near the combobox so we can drive it directly. */
+export function findBackingSelect(combo: HTMLElement): HTMLSelectElement | null {
+  const container = combo.closest(".select2-container, .chosen-container, .selectize-control");
+  // The hidden select is usually the immediate previous sibling of the widget
+  // container, or a select within the shared parent.
+  const candidates: (Element | null)[] = [
+    container?.previousElementSibling ?? null,
+    combo.previousElementSibling,
+    combo.parentElement?.querySelector("select") ?? null,
+    container?.parentElement?.querySelector("select") ?? null,
+  ];
+  for (const c of candidates) {
+    if (c && c.tagName === "SELECT") return c as HTMLSelectElement;
+  }
+  return null;
+}
 
 function optionValue(option: HTMLElement): string {
   return (
@@ -46,12 +65,18 @@ export function detectComboboxes(doc: Document): ComboboxInfo[] {
     });
   return combos.map((combo) => {
     const listbox = findListbox(combo);
-    const options = listbox
+    const backingSelect = findBackingSelect(combo);
+    let options = listbox
       ? deepQueryAll<HTMLElement>(listbox, '[role="option"]').map((o) => ({
           value: optionValue(o),
           label: o.textContent?.trim() ?? "",
         }))
       : [];
+    if (options.length === 0 && backingSelect) {
+      options = Array.from(backingSelect.options)
+        .filter((o) => o.value !== "")
+        .map((o) => ({ value: o.value, label: o.textContent?.trim() ?? "" }));
+    }
     // Current value: a linked hidden input, aria-activedescendant, or the
     // combobox's own text value.
     let currentValue: string | null = null;
@@ -63,7 +88,10 @@ export function detectComboboxes(doc: Document): ComboboxInfo[] {
     } else if (combo instanceof HTMLInputElement) {
       currentValue = combo.value || null;
     }
-    return { element: combo, listbox, options, currentValue };
+    if (currentValue === null && backingSelect && backingSelect.value) {
+      currentValue = backingSelect.value;
+    }
+    return { element: combo, listbox, backingSelect, options, currentValue };
   });
 }
 
