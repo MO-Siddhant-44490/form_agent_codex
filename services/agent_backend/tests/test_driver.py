@@ -92,3 +92,28 @@ def test_missing_fact_for_required_field_needs_user():
     assert result.unmapped_required == ["email"]
     # Everything mappable was still filled before asking (finish what you can).
     assert len(result.filled_fields) == 7
+
+
+def test_undriveable_field_is_blocked_not_fatal():
+    # A field whose execution FAILS (e.g. an undriveable custom widget) blocks
+    # that field and the run finishes NEEDS_USER after filling the rest —
+    # rather than crashing the whole run.
+
+    class FailingField(FakeTransport):
+        def execute(self, action):
+            if action.target and action.target.field_id == "full-name":
+                from agent_backend.transport import ExecuteOutcome
+                from agent_backend.transports.fake import ActionResultStatus
+
+                return ExecuteOutcome(
+                    result=self._result(action, ActionResultStatus.FAILED, error="widget"),
+                    verification=None,
+                    observation=None,
+                )
+            return super().execute(action)
+
+    transport = FailingField()
+    result = run_fill(transport, slice1_facts())
+    assert result.outcome is RunOutcome.NEEDS_USER
+    assert any(q.field_id == "full-name" for q in result.questions)
+    assert len(result.filled_fields) == 7  # everything else filled

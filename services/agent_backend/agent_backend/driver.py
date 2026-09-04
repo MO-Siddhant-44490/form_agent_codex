@@ -376,9 +376,20 @@ def run_fill(
             observation = transport.observe()
             continue
         if outcome.result.status == "FAILED":
-            result.outcome = RunOutcome.FATAL_FAILURE
-            result.detail = f"execution failed: {outcome.result.error}"
-            return result
+            # A field we cannot fill (e.g. an undriveable custom widget) is
+            # blocked and reported — the run finishes NEEDS_USER after filling
+            # everything else, rather than crashing on one field.
+            blocked_fields.add(field_id)
+            result.questions.append(
+                UserQuestion(
+                    question_id=f"q-failed-{field_id}",
+                    kind=QuestionKind.AMBIGUOUS_MAPPING,
+                    prompt=f"Could not fill {field_id} ({outcome.result.error}); please do it manually.",
+                    field_id=field_id,
+                )
+            )
+            observation = transport.observe()
+            continue
 
         verification = outcome.verification
         if verification is not None:

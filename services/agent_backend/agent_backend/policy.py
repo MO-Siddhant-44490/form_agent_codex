@@ -13,6 +13,8 @@ from form_contracts import (
     PolicyRule,
 )
 
+from .mapper import match_option as _match_option
+
 # Field-mutating kinds must target a field present in the fresh observation.
 VALUE_KINDS = frozenset(
     {
@@ -102,7 +104,11 @@ def check_action(
                     PolicyRule.VALUE_WITHOUT_PROVENANCE,
                     "resolved value differs from the fact-derived value",
                 )
-            if field.options is not None and action.resolved_value not in field.options:
+            # Enforce option membership only when the field actually exposes
+            # options (a cascading/lazy combobox has none until opened — the
+            # executor validates the option at click time). Match tolerantly
+            # (case-insensitive) to align with the mapper.
+            if field.options and _match_option(action.resolved_value, field.options) is None:
                 return _block(
                     action,
                     PolicyRule.UNSUPPORTED_OPTION,

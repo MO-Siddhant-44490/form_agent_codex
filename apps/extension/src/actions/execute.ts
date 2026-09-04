@@ -223,10 +223,14 @@ function executeCombobox(doc: Document, action: BrowserAction): ActionResult {
   const listbox = fresh.listbox;
   if (!listbox) return failed(action, "combobox has no listbox");
   const options = deepQueryAll<HTMLElement>(listbox, '[role="option"]');
-  const match = options.find(
-    (o) =>
-      (o.getAttribute("data-value") ?? o.getAttribute("value") ?? o.textContent?.trim()) === value,
-  );
+  const target = value.trim().toLowerCase();
+  const optionKey = (o: HTMLElement) =>
+    (o.getAttribute("data-value") ?? o.getAttribute("value") ?? o.textContent?.trim() ?? "");
+  // Exact first, then case-insensitive on value or visible text.
+  const match =
+    options.find((o) => optionKey(o) === value) ??
+    options.find((o) => optionKey(o).trim().toLowerCase() === target) ??
+    options.find((o) => (o.textContent?.trim().toLowerCase() ?? "") === target);
   if (!match) return failed(action, `no combobox option for ${value}`);
   match.click();
   return result(action, "EXECUTED");

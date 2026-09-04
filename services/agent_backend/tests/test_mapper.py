@@ -217,3 +217,15 @@ def test_derivation_runs_even_when_all_facts_are_mapped_elsewhere():
     assert outcome.assignments["dob"].fact.key == "date_of_birth"
     assert "age" in outcome.assignments
     assert outcome.assignments["age"].fact.status.value == "derived"
+
+
+def test_match_option_is_case_insensitive_but_not_loose():
+    from agent_backend.mapper import match_option
+
+    opts = ["", "MAHARASHTRA", "Manipur", "Gujarat"]
+    assert match_option("Maharashtra", opts) == "MAHARASHTRA"  # case-insensitive
+    assert match_option("maharashtra ", opts) == "MAHARASHTRA"  # trimmed
+    # Not a loose substring match: "Ma" must not silently pick a state.
+    assert match_option("Ma", opts) is None
+    # "India" must not match a 2-letter code "IN".
+    assert match_option("India", ["", "IN", "US"]) is None

@@ -100,20 +100,45 @@ def _question(
     )
 
 
+# Placeholder option values (not real choices) that should be ignored when
+# matching a fact to a dropdown.
+_PLACEHOLDER_OPTION = ("", "select", "--", "choose", "first")
+
+
+def match_option(value: str, options: list[str]) -> str | None:
+    """Match a fact value to a dropdown option: exact, then
+    case-insensitive/trimmed. Returns the option's exact string (what the
+    executor must click), or None. Deliberately conservative — a loose
+    substring match would wrongly pick e.g. "IN" for "India" or "Manipur" for
+    "Maharashtra"; genuine abbreviation mapping is the model's job."""
+    if value in options:
+        return value
+    v = value.strip().lower()
+    for option in options:
+        if option and option.strip().lower() == v:
+            return option
+    return None
+
+
 def _assign(field: FormField, fact: DocumentFact) -> Assignment | UserQuestion:
     """Derive the applicable value; a needed-but-impossible conversion becomes
     a question, never a guess."""
     if field.input_type == "checkbox":
         return Assignment(field=field, fact=fact, value=None, checked=desired_checked(fact))
-    if field.options is not None:
-        if fact.value in field.options:
-            return Assignment(field=field, fact=fact, value=fact.value, checked=None)
+    if field.options:
+        matched = match_option(fact.value, field.options)
+        if matched is not None:
+            return Assignment(field=field, fact=fact, value=matched, checked=None)
         return _question(
             QuestionKind.AMBIGUOUS_MAPPING,
             field,
             f"Which option matches {fact.key} = {fact.value!r}?",
             fact_keys=[fact.key],
         )
+    # A combobox with no options discovered yet (e.g. a cascading dropdown whose
+    # choices load only when opened): assign optimistically with the fact value;
+    # the executor opens it and matches an option at click time, and recovery
+    # handles it if none is found.
     return Assignment(field=field, fact=fact, value=fact.value, checked=None)
 
 
