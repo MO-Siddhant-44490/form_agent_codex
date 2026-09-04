@@ -360,3 +360,37 @@ def test_datepicker_fill_via_extension(fixture_server):
         assert values["date_of_birth"] == "1998-04-17"  # picked from the calendar
     finally:
         transport.close()
+
+
+def test_shadow_mode_proposes_without_touching_the_page(fixture_server):
+    """Slice 6 shadow mode in a real browser: propose a full plan from a live
+    page and confirm the DOM was never modified (safe on live sites)."""
+    from agent_backend.evaluation.metrics import GroundTruth, score_plan
+    from agent_backend.evaluation.shadow import propose_plan
+
+    transport = ExtensionPlaywrightTransport(EXTENSION_DIST, FIXTURE_URL)
+    try:
+        # propose_plan attaches + observes internally; it must not execute.
+        plan = propose_plan(transport, slice1_facts())
+
+        assert len(plan.proposed_actions) >= 5
+        assert plan.unsafe_proposals == []
+        assert all(p.action.kind.value != "SUBMIT" for p in plan.proposed_actions)
+
+        # The served form started empty and proposing changed nothing.
+        values_after = transport.page_eval(
+            "() => Object.fromEntries(new FormData(document.getElementById('application-form')).entries())"
+        )
+        assert all(v == "" for v in values_after.values())  # untouched
+        assert transport.page_eval("() => window.__fixture.submissions.length") == 0
+
+        card = score_plan(
+            plan,
+            GroundTruth(
+                fixture_id="basic-form",
+                expected_fill={"full-name": "Ada Lovelace", "email": "ada@example.test"},
+            ),
+        )
+        assert card.mapping_accuracy == 1.0
+    finally:
+        transport.close()
