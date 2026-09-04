@@ -30,3 +30,30 @@ two-address case: the model maps the single `address` fact to "current
 address" and asks about "permanent" — defensible; the eval label is
 conservative (expects both to ask). Zero unsafe mappings: the credential
 field is never mapped, and the deterministic policy gate blocks it regardless.
+
+
+## Shadow mode, ablations, and benchmark (offline, no creds)
+
+```bash
+uv run python evals/runners/run_shadow_eval.py     # propose-only metrics + safety gate
+uv run python evals/runners/run_ablation.py        # ablation grid + false-success rates
+uv run python evals/runners/run_benchmark.py       # consolidated JSON + Markdown report
+```
+
+Shadow mode observes a page and proposes a full typed plan WITHOUT executing —
+safe on held-out live sites (point it at the extension transport). The ablation
+study shows the open-loop config's non-zero false-success rate vs the closed
+loop's zero, and recovery completing flaky fields that no-recovery abandons.
+
+## Model comparison (live Bedrock)
+
+```bash
+aws sso login --profile dev
+AWS_PROFILE=dev uv run python evals/runners/run_model_comparison.py \
+    --models apac.anthropic.claude-sonnet-4-20250514-v1:0 \
+             apac.anthropic.claude-3-7-sonnet-20250219-v1:0 \
+             apac.anthropic.claude-3-haiku-20240307-v1:0
+```
+
+Runs the mapping cases across each model and reports accuracy, option accuracy,
+unsafe mappings, schema failures, latency, and token usage side by side.
