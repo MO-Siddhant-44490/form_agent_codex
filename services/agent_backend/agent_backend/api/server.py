@@ -3,6 +3,7 @@ agent_backend.api.server`."""
 
 from ..document_intelligence.fact_store import FactStore
 from ..document_intelligence.store import DocumentStore
+from ..model_gateway.factory import build_default_mapper
 from ..persistence.repository import Repository, make_engine
 from .app import AppState, create_app
 from .auth import DevTokenAuth

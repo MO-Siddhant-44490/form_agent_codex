@@ -2,19 +2,23 @@
 authenticated extension WebSocket. Wiring only — orchestration, mapping, and
 policy live in their own modules."""
 
+import asyncio
+import threading
 from dataclasses import dataclass, field
 
 from fastapi import Depends, FastAPI, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
-from form_contracts import redacted_fact_repr
+from form_contracts import DocumentFact, FactStatus, FactValueType, Sensitivity, redacted_fact_repr
 
 from ..document_intelligence.fact_store import FactStore
 from ..document_intelligence.parser_factory import build_parser_from_env
 from ..document_intelligence.pipeline import DocumentPipeline
 from ..document_intelligence.store import DocumentRejected, DocumentStore
+from ..driver import run_fill
 from ..mapper import DeterministicMapper, Mapper
 from ..persistence.repository import Repository, make_engine
 from .auth import AuthError, DevTokenAuth
 from .session_hub import ExtensionSession, ProtocolError
+from .transport_ws import WebSocketBrowserTransport
 
 
 @dataclass
@@ -30,8 +34,68 @@ class AppState:
     sessions: dict[str, ExtensionSession] = field(default_factory=dict)
 
 
+def _facts_from_payload(items: list[dict]) -> list[DocumentFact]:
+    """Build user-provided facts from the panel's simple {key, value} list."""
+    facts = []
+    for i, item in enumerate(items):
+        key = item.get("key")
+        value = item.get("value")
+        if not key or value is None:
+            continue
+        sens = Sensitivity(item.get("sensitivity", "personal"))
+        facts.append(
+            DocumentFact(
+                fact_id=f"user-{key}-{i}",
+                key=key,
+                value=str(value),
+                value_type=FactValueType(item.get("value_type", "string")),
+                confidence=1.0,
+                sensitivity=sens,
+                status=FactStatus.USER_PROVIDED,
+            )
+        )
+    return facts
+
+
+def _start_fill(st, session, loop, fact_items, send) -> None:
+    """Drive a fill in the connected tab (in a worker thread, since run_fill is
+    sync) and stream the result back to the panel. Never submits."""
+    facts = _facts_from_payload(fact_items)
+
+    def worker():
+        transport = WebSocketBrowserTransport(session, loop)
+        try:
+            result = run_fill(transport, facts, mapper=st.mapper)
+            payload = {
+                "type": "fill_result",
+                "outcome": result.outcome.value,
+                "filled": result.filled_fields,
+                "questions": [
+                    {"field_id": q.field_id, "kind": q.kind.value, "prompt": q.prompt}
+                    for q in result.questions
+                ],
+                "detail": result.detail,
+            }
+        except Exception as error:  # surface failures to the panel
+            payload = {"type": "fill_error", "error": str(error)}
+        st.repo.append_event(session.run_id, "fill_completed", {"outcome": payload.get("outcome")})
+        asyncio.run_coroutine_threadsafe(send(payload), loop)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
 def create_app(state: AppState | None = None) -> FastAPI:
     app = FastAPI(title="Form Agent backend")
+    from fastapi.middleware.cors import CORSMiddleware
+
+    # Dev: the side panel calls from a chrome-extension:// origin. The server
+    # binds to localhost, so allowing all origins here is safe for local use.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
     app.state.app_state = state or AppState(
         repo=Repository(make_engine()),
         auth=DevTokenAuth(),
@@ -136,9 +200,13 @@ def create_app(state: AppState | None = None) -> FastAPI:
         )
         st.sessions[run_id] = session
         st.repo.append_event(run_id, "tab_attached", {"origin": hello["origin"]})
+        loop = asyncio.get_event_loop()
         try:
             while True:
                 raw = await websocket.receive_json()
+                if raw.get("type") == "start_fill":
+                    _start_fill(st, session, loop, raw.get("facts", []), send)
+                    continue
                 try:
                     session.deliver(raw)
                 except ProtocolError as error:

@@ -4,20 +4,36 @@
 <meta charset="utf-8">
 <title>Form Agent</title>
 <style>
-  body { font-family: system-ui, sans-serif; margin: 0; padding: 1rem; font-size: 14px; }
-  button { padding: .4rem 1rem; margin-right: .5rem; }
-  #status { margin: 1rem 0; padding: .5rem; background: #f4f4f4; border-radius: 4px; }
-  .error { color: #b00020; }
-  table { border-collapse: collapse; width: 100%; font-size: 12px; }
-  td, th { border: 1px solid #ddd; padding: .25rem .4rem; text-align: left; }
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 1rem; font-size: 14px; color: #1a1a1a; }
+  h2 { margin: 0 0 .25rem; font-size: 1.1rem; }
+  .sub { color: #666; font-size: 12px; margin-bottom: 1rem; }
+  label { display: block; font-weight: 600; margin-top: .75rem; font-size: 12px; }
+  textarea { width: 100%; box-sizing: border-box; font-family: ui-monospace, monospace; font-size: 12px; padding: .5rem; border: 1px solid #ccc; border-radius: 6px; }
+  button { padding: .55rem 1rem; border: 0; border-radius: 6px; font-weight: 600; cursor: pointer; }
+  button.primary { background: #2b6cb0; color: #fff; width: 100%; margin-top: .75rem; font-size: 14px; }
+  button.primary:disabled { background: #9db8d2; cursor: default; }
+  #status { margin-top: 1rem; padding: .6rem; border-radius: 6px; background: #f3f4f6; font-size: 13px; }
+  #status.ok { background: #e6f4ea; } #status.warn { background: #fef3c7; } #status.err { background: #fde2e1; }
+  .log { margin-top: .75rem; font-size: 12px; }
+  .log div { padding: .2rem 0; border-bottom: 1px solid #eee; }
+  .qs { margin-top: 1rem; }
+  .q { background: #fff8e1; border: 1px solid #f0d98a; border-radius: 6px; padding: .5rem; margin-top: .5rem; font-size: 13px; }
+  .q b { display: block; }
 </style>
 </head>
 <body>
-<h2>Form Agent <small>(observe-only)</small></h2>
-<button id="attach">Attach to this tab</button>
-<button id="observe">Observe</button>
-<div id="status">Not attached.</div>
-<div id="fields"></div>
+<h2>Form Agent</h2>
+<div class="sub">Fills the form in <b>this tab</b> from your profile. Never submits — you review first.</div>
+
+<label for="facts">Your profile (one <code>key: value</code> per line)</label>
+<textarea id="facts" rows="9"></textarea>
+
+<button id="fill" class="primary">Fill this form</button>
+
+<div id="status">Ready. Open a form in this tab, then click Fill.</div>
+<div class="log" id="log"></div>
+<div class="qs" id="questions"></div>
+
 <script src="sidepanel.js"></script>
 </body>
 </html>

@@ -28,7 +28,8 @@ export type ExecuteResponse =
 export type PanelCommand =
   | { type: "FA_ATTACH_ACTIVE_TAB" }
   | { type: "FA_OBSERVE_NOW" }
-  | { type: "FA_GET_STATE" };
+  | { type: "FA_GET_STATE" }
+  | { type: "FA_FILL"; facts: unknown[]; backendUrl?: string };
 
 export type SessionState = {
   attached: boolean;

@@ -191,6 +191,83 @@ async function attachActiveTab(): Promise<SessionState> {
   }
 }
 
+// Product flow: drive a fill in the active tab via the backend over a
+// WebSocket. The backend does the mapping (Bedrock) and orchestration; this
+// worker answers its observe/execute requests against the real tab and relays
+// the result to the side panel.
+async function fillViaBackend(facts: unknown[], backendUrl: string): Promise<void> {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (!tab?.id || !tab.url) {
+    chrome.runtime.sendMessage({ type: "FA_FILL_DONE", result: { type: "fill_error", error: "no active tab" } });
+    return;
+  }
+  await attachToTab(tab.id, tab.url);
+
+  // Create a backend run and align this session's run id with it (so the
+  // driver's actions pass the run/tab/origin guards).
+  const runResp = await fetch(`${backendUrl}/runs`, { method: "POST" });
+  const { run_id, session_token } = (await runResp.json()) as {
+    run_id: string;
+    session_token: string;
+  };
+  state.runId = run_id;
+
+  const wsUrl = `${backendUrl.replace(/^http/, "ws")}/ws/${run_id}?token=${session_token}`;
+  const ws = new WebSocket(wsUrl);
+  let inboundSeq = 0;
+
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ type: "hello", origin: state.origin, tab_id: state.tabId }));
+    ws.send(JSON.stringify({ type: "start_fill", facts }));
+    chrome.runtime.sendMessage({ type: "FA_FILL_STARTED" });
+  };
+
+  ws.onmessage = async (event) => {
+    const env = JSON.parse(event.data as string);
+    if (env.type === "fill_result" || env.type === "fill_error") {
+      chrome.runtime.sendMessage({ type: "FA_FILL_DONE", result: env });
+      ws.close();
+      return;
+    }
+    const payload = env.payload ?? {};
+    const reply: Record<string, unknown> = {
+      protocol_version: env.protocol_version,
+      message_type: "action_result",
+      run_id,
+      sent_at: new Date().toISOString(),
+      payload: { _correlation_id: payload._correlation_id, _inbound_seq: ++inboundSeq } as Record<
+        string,
+        unknown
+      >,
+    };
+    const rp = reply.payload as Record<string, unknown>;
+    if (payload.command === "observe") {
+      await observe();
+      rp.observation = state.lastObservation;
+    } else if (payload.command === "execute") {
+      const outcome = await execute(payload.action);
+      rp.result = outcome.result;
+      if (outcome.state.lastObservation) rp.observation = outcome.state.lastObservation;
+      if (outcome.verification) rp.verification = outcome.verification;
+      // Report per-field progress to the panel as it fills.
+      chrome.runtime.sendMessage({
+        type: "FA_FILL_PROGRESS",
+        field: outcome.result.action_id,
+        status: outcome.result.status,
+        verification: outcome.verification?.status ?? null,
+      });
+    }
+    ws.send(JSON.stringify(reply));
+  };
+
+  ws.onerror = () => {
+    chrome.runtime.sendMessage({
+      type: "FA_FILL_DONE",
+      result: { type: "fill_error", error: "backend connection failed (is it running?)" },
+    });
+  };
+}
+
 chrome.runtime.onMessage.addListener(
   (message: PanelCommand, _sender, sendResponse: (s: SessionState) => void) => {
     if (message?.type === "FA_ATTACH_ACTIVE_TAB") {
@@ -202,6 +279,11 @@ chrome.runtime.onMessage.addListener(
       return true;
     }
     if (message?.type === "FA_GET_STATE") {
+      sendResponse(state);
+      return false;
+    }
+    if (message?.type === "FA_FILL") {
+      void fillViaBackend(message.facts ?? [], message.backendUrl ?? "http://127.0.0.1:8000");
       sendResponse(state);
       return false;
     }
