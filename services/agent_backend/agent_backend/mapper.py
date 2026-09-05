@@ -6,6 +6,7 @@ and credential targets are discarded (invariants 2, 5)."""
 
 from dataclasses import dataclass
 from dataclasses import field as dc_field
+from enum import StrEnum
 from typing import Protocol
 
 from form_contracts import (
@@ -14,6 +15,7 @@ from form_contracts import (
     ModelCallMetadata,
     PageObservation,
     QuestionKind,
+    Sensitivity,
     UserQuestion,
 )
 
@@ -55,12 +57,31 @@ def _derivation_description(field: FormField) -> str:
 MIN_MODEL_CONFIDENCE = 0.6
 
 
+class MappingSource(StrEnum):
+    """How a field->fact binding was produced — its trust provenance. NAME_MATCH
+    and AUTOCOMPLETE derive from signals an untrusted page cannot forge without
+    also being the legitimately-correct field; MODEL and MEMORY are influenced by
+    (or recalled from) untrusted page content and are lower trust."""
+
+    NAME_MATCH = "name_match"
+    AUTOCOMPLETE = "autocomplete"
+    DERIVATION = "derivation"
+    MEMORY = "memory"
+    MODEL = "model"
+
+
+# Bindings whose field identity came from untrusted page content: not trusted to
+# route a SENSITIVE value without human confirmation (indirect-injection guard).
+_LOW_TRUST_SOURCES = frozenset({MappingSource.MODEL, MappingSource.MEMORY})
+
+
 @dataclass(frozen=True)
 class Assignment:
     field: FormField
     fact: DocumentFact
     value: str | None  # fact-derived value to apply (None for checkboxes)
     checked: bool | None
+    source: MappingSource = MappingSource.NAME_MATCH
 
 
 @dataclass
@@ -126,15 +147,19 @@ def match_option(value: str, options: list[str], labels: list[str] | None = None
     return None
 
 
-def _assign(field: FormField, fact: DocumentFact) -> Assignment | UserQuestion:
+def _assign(
+    field: FormField, fact: DocumentFact, source: MappingSource = MappingSource.NAME_MATCH
+) -> Assignment | UserQuestion:
     """Derive the applicable value; a needed-but-impossible conversion becomes
-    a question, never a guess."""
+    a question, never a guess. `source` records how the binding was produced."""
     if field.input_type == "checkbox":
-        return Assignment(field=field, fact=fact, value=None, checked=desired_checked(fact))
+        return Assignment(
+            field=field, fact=fact, value=None, checked=desired_checked(fact), source=source
+        )
     if field.options:
         matched = match_option(fact.value, field.options, field.option_labels)
         if matched is not None:
-            return Assignment(field=field, fact=fact, value=matched, checked=None)
+            return Assignment(field=field, fact=fact, value=matched, checked=None, source=source)
         return _question(
             QuestionKind.AMBIGUOUS_MAPPING,
             field,
@@ -145,19 +170,24 @@ def _assign(field: FormField, fact: DocumentFact) -> Assignment | UserQuestion:
     # choices load only when opened): assign optimistically with the fact value;
     # the executor opens it and matches an option at click time, and recovery
     # handles it if none is found.
-    return Assignment(field=field, fact=fact, value=fact.value, checked=None)
+    return Assignment(field=field, fact=fact, value=fact.value, checked=None, source=source)
 
 
 def _assign_with_option(
-    field: FormField, fact: DocumentFact, option_value: str | None
+    field: FormField,
+    fact: DocumentFact,
+    option_value: str | None,
+    source: MappingSource = MappingSource.MODEL,
 ) -> Assignment | UserQuestion:
     """Like _assign, but a validated model-selected option may bridge the
     fact-to-option conversion for enumerated controls."""
-    direct = _assign(field, fact)
+    direct = _assign(field, fact, source)
     if isinstance(direct, Assignment):
         return direct
     if option_value is not None and field.options is not None and option_value in field.options:
-        return Assignment(field=field, fact=fact, value=option_value, checked=None)
+        return Assignment(
+            field=field, fact=fact, value=option_value, checked=None, source=source
+        )
     return direct
 
 
@@ -221,7 +251,7 @@ class ModelAssistedMapper:
             and match_fact(f, facts_by_key) is None
         ]
         if not unresolved:
-            return outcome
+            return self._guard_sensitive(outcome)
 
         # Structural grounding (plan.md insight #2): the autocomplete attribute
         # is a W3C-standard, value-free signal that binds a field to a fact more
@@ -230,7 +260,7 @@ class ModelAssistedMapper:
         unresolved = self._autocomplete_ground(facts_by_key, unresolved, outcome)
         if not unresolved:
             self._derive_missing(observation, facts_by_key, outcome)
-            return outcome
+            return self._guard_sensitive(outcome)
 
         # Episodic memory (plan.md insight #3): a field this site mapped before
         # resolves deterministically here — no model call. Recalled mappings are
@@ -240,7 +270,7 @@ class ModelAssistedMapper:
             unresolved = self._recall(observation, facts_by_key, unresolved, outcome)
             if not unresolved:
                 self._derive_missing(observation, facts_by_key, outcome)
-                return outcome
+                return self._guard_sensitive(outcome)
 
         unused_facts = [
             fact
@@ -254,6 +284,34 @@ class ModelAssistedMapper:
             self._model_map(observation, facts_by_key, unresolved, unused_facts, outcome)
 
         self._derive_missing(observation, facts_by_key, outcome)
+        return self._guard_sensitive(outcome)
+
+    def _guard_sensitive(self, outcome: MappingOutcome) -> MappingOutcome:
+        """Indirect-injection / exfiltration guard (plan.md insight #4, CaMeL):
+        a SENSITIVE fact bound by an untrusted, page-derived signal (the model,
+        or possibly-poisoned memory) is NOT auto-filled. Withdraw the assignment
+        and ask the user to confirm the field before the value flows there.
+        High-trust bindings (exact name, standard autocomplete) are unaffected,
+        and PERSONAL/PUBLIC facts still auto-fill."""
+        for field_id in list(outcome.assignments):
+            assignment = outcome.assignments[field_id]
+            if (
+                assignment.fact.sensitivity is Sensitivity.SENSITIVE
+                and assignment.source in _LOW_TRUST_SOURCES
+            ):
+                del outcome.assignments[field_id]
+                if all(q.field_id != field_id for q in outcome.questions):
+                    outcome.questions.append(
+                        _question(
+                            QuestionKind.SENSITIVE_MAPPING,
+                            assignment.field,
+                            f"Confirm before filling the sensitive value "
+                            f"'{assignment.fact.key}' into "
+                            f"'{assignment.field.label or field_id}' "
+                            f"(matched by {assignment.source.value}, not a trusted signal).",
+                            fact_keys=[assignment.fact.key],
+                        )
+                    )
         return outcome
 
     def _autocomplete_ground(
@@ -270,7 +328,7 @@ class ModelAssistedMapper:
             if fact is None:
                 still.append(field)
                 continue
-            assigned = _assign(field, fact)
+            assigned = _assign(field, fact, MappingSource.AUTOCOMPLETE)
             if isinstance(assigned, Assignment):
                 outcome.assignments[field.field_id] = assigned
                 outcome.questions = [
@@ -301,7 +359,7 @@ class ModelAssistedMapper:
             if fact is None:
                 still.append(field)
                 continue
-            assigned = _assign(field, fact)
+            assigned = _assign(field, fact, MappingSource.MEMORY)
             if isinstance(assigned, Assignment):
                 outcome.assignments[field.field_id] = assigned
                 outcome.questions = [
@@ -409,7 +467,7 @@ class ModelAssistedMapper:
         outcome.model_calls.extend(result.model_calls)
         for derived in result.facts:
             for field in fields_for_key.get(derived.key, []):
-                assigned = _assign(field, derived)
+                assigned = _assign(field, derived, MappingSource.DERIVATION)
                 if isinstance(assigned, Assignment):
                     outcome.assignments[field.field_id] = assigned
                     outcome.questions = [

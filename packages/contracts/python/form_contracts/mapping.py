@@ -38,6 +38,10 @@ class QuestionKind(StrEnum):
     AMBIGUOUS_MAPPING = "ambiguous_mapping"
     CONFLICTING_FACTS = "conflicting_facts"
     LOW_CONFIDENCE = "low_confidence"
+    # A sensitive fact was bound to a field by an untrusted (page-derived)
+    # signal — the model or poisoned memory. Confirm the field before the value
+    # flows there (indirect-prompt-injection / exfiltration guard).
+    SENSITIVE_MAPPING = "sensitive_mapping"
 
 
 class UserQuestion(StrictModel):

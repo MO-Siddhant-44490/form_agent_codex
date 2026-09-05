@@ -5,7 +5,8 @@
         "missing_fact",
         "ambiguous_mapping",
         "conflicting_facts",
-        "low_confidence"
+        "low_confidence",
+        "sensitive_mapping"
       ],
       "title": "QuestionKind",
       "type": "string"

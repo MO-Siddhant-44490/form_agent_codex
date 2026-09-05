@@ -7,11 +7,27 @@ from agent_backend.model_gateway.base import GatewayResult, ModelUnavailable
 from agent_backend.model_gateway.fake import FakeModelAdapter
 from agent_backend.transports.fake import FakeField, FakeTransport, basic_form_fields
 from form_contracts import (
+    DocumentFact,
+    FactStatus,
+    FactValueType,
     FieldMapping,
     FieldMappingBatch,
     ModelCallMetadata,
     QuestionKind,
+    Sensitivity,
 )
+
+
+def _sensitive_fact(key: str = "national_id") -> DocumentFact:
+    return DocumentFact(
+        fact_id=f"f-{key}",
+        key=key,
+        value="XYZ-000-111",
+        value_type=FactValueType.STRING,
+        confidence=1.0,
+        sensitivity=Sensitivity.SENSITIVE,
+        status=FactStatus.USER_PROVIDED,
+    )
 
 
 def facts_by_key(*, drop: set[str] = frozenset(), **value_overrides):
@@ -142,6 +158,33 @@ def test_memory_hint_ignored_when_the_fact_no_longer_exists():
     # Drop the fact the memory points at; the mapper must still consult the model.
     ModelAssistedMapper(CountingDown(), memory=mem).map(obs, facts_by_key(drop={"full-name"}))
     assert called["n"] == 1  # memory did not short-circuit past the missing fact
+
+
+def test_sensitive_fact_from_model_requires_confirmation():
+    """A SENSITIVE fact bound by the model (untrusted, page-derived signal) is
+    NOT auto-filled — it becomes a confirmation question (injection guard)."""
+    transport = FakeTransport(fields=tricky_fields())
+    obs = transport.observe()
+    target = obs.fields[0].field_id  # obscure name; only the model could map it
+    gateway = make_gateway(
+        [FieldMapping(field_id=target, fact_key="national_id", confidence=0.97)]
+    )
+    outcome = ModelAssistedMapper(gateway).map(obs, {"national_id": _sensitive_fact()})
+
+    assert target not in outcome.assignments
+    assert any(q.kind is QuestionKind.SENSITIVE_MAPPING for q in outcome.questions)
+
+
+def test_sensitive_fact_from_exact_name_match_is_allowed():
+    """A trusted binding (exact name match) may route a SENSITIVE value — an
+    attacker cannot forge the exact field name without being the right field."""
+    field = FakeField("national_id", "text", "national_id", "National ID", required=True)
+    transport = FakeTransport(fields=[field])
+    outcome = ModelAssistedMapper(make_gateway([])).map(
+        transport.observe(), {"national_id": _sensitive_fact()}
+    )
+    assert "national_id" in outcome.assignments
+    assert not any(q.kind is QuestionKind.SENSITIVE_MAPPING for q in outcome.questions)
 
 
 def test_model_unavailable_falls_back_to_abstention():
