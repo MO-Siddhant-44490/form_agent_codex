@@ -16,6 +16,7 @@ from .models import (
     Base,
     DocumentRow,
     EventRow,
+    FieldMappingMemoryRow,
     IdempotencyRow,
     RunRow,
 )
@@ -197,6 +198,48 @@ class Repository:
                         storage_key=storage_key,
                     )
                 )
+
+    # -- episodic mapping memory (value-free; fact key only) ----------------
+
+    def recall_mapping(self, site: str, signature: str) -> str | None:
+        with self.session() as s:
+            row = s.get(FieldMappingMemoryRow, (site, signature))
+            return row.fact_key if row else None
+
+    def remember_mapping(
+        self, site: str, signature: str, fact_key: str, input_type: str
+    ) -> None:
+        with self.session() as s:
+            row = s.get(FieldMappingMemoryRow, (site, signature))
+            if row is None:
+                s.add(
+                    FieldMappingMemoryRow(
+                        site_key=site,
+                        field_signature=signature,
+                        fact_key=fact_key,
+                        input_type=input_type,
+                    )
+                )
+            else:
+                # Reinforce the latest observed mapping for this signature.
+                row.fact_key = fact_key
+                row.input_type = input_type
+                row.hits += 1
+
+
+class RepositoryMappingMemory:
+    """Durable MappingMemory backed by the Repository (survives restarts, so
+    memory is genuinely cross-run). Structurally implements the MappingMemory
+    protocol used by the mapper and driver."""
+
+    def __init__(self, repo: "Repository") -> None:
+        self._repo = repo
+
+    def recall(self, site: str, signature: str) -> str | None:
+        return self._repo.recall_mapping(site, signature)
+
+    def remember(self, site: str, signature: str, fact_key: str, input_type: str) -> None:
+        self._repo.remember_mapping(site, signature, fact_key, input_type)
 
 
 def _aware(dt: datetime) -> datetime:

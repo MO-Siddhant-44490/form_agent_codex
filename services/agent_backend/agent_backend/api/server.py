@@ -4,7 +4,7 @@ agent_backend.api.server`."""
 from ..document_intelligence.fact_store import FactStore
 from ..document_intelligence.store import DocumentStore
 from ..model_gateway.factory import build_default_mapper
-from ..persistence.repository import Repository, make_engine
+from ..persistence.repository import Repository, RepositoryMappingMemory, make_engine
 from .app import AppState, create_app
 from .auth import DevTokenAuth
 from .config import BackendConfig
@@ -12,18 +12,21 @@ from .config import BackendConfig
 
 def build_app():
     config = BackendConfig.from_env()
-    mapper = build_default_mapper()
+    repo = Repository(make_engine(config.database_url))
+    memory = RepositoryMappingMemory(repo)
+    mapper = build_default_mapper(memory=memory)
     print(
         f"model provider: {type(mapper).__name__} "
         f"({getattr(getattr(mapper, '_gateway', None), 'model_id', 'deterministic')})"
     )
     return create_app(
         AppState(
-            repo=Repository(make_engine(config.database_url)),
+            repo=repo,
             auth=DevTokenAuth(),
             documents=DocumentStore(),
             facts=FactStore(),
             mapper=mapper,
+            memory=memory,
         )
     )
 

@@ -31,6 +31,7 @@ from form_contracts import (
 )
 
 from .mapper import DeterministicMapper, Mapper, MappingOutcome
+from .memory import MappingMemory, field_signature, site_key
 from .planner import assignment_satisfied, build_action_for, normalize_value
 from .policy import check_action
 from .recovery import RecoveryDecision, RecoveryPlanner
@@ -202,6 +203,7 @@ def run_fill(
     *,
     verify: bool = True,
     recover: bool = True,
+    memory: MappingMemory | None = None,
 ) -> DriveResult:
     """`verify` and `recover` are ablation switches (plan.md §17), both on by
     default. verify=False runs open-loop (trust the executor, skip
@@ -525,6 +527,15 @@ def run_fill(
             method_hints.pop(field_id, None)
             value_overrides.pop(field_id, None)
             recovery.clear(field_id)
+            # Episodic memory: record which fact filled this field (value-free —
+            # only the fact KEY) so a repeat visit resolves it without the model.
+            if memory is not None:
+                memory.remember(
+                    site_key(session.origin),
+                    field_signature(fresh_field),
+                    assignment.fact.key,
+                    fresh_field.input_type,
+                )
             continue
         if verification.status in (
             VerificationStatus.RETRYABLE_FAILURE,

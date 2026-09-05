@@ -63,6 +63,27 @@ def test_idempotency_is_durable_across_reopen(tmp_path):
     assert r2.find_idempotent("k-unknown") is None
 
 
+def test_mapping_memory_is_durable_across_reopen(tmp_path):
+    url = f"sqlite+pysqlite:///{tmp_path / 'r.db'}"
+    r1 = repo(url)
+    r1.remember_mapping("https://pgportal.gov.in", "sig123", "district", "combobox")
+
+    # New Repository over the same file: episodic memory persists cross-run.
+    r2 = repo(url)
+    assert r2.recall_mapping("https://pgportal.gov.in", "sig123") == "district"
+    assert r2.recall_mapping("https://pgportal.gov.in", "unknown-sig") is None
+    assert r2.recall_mapping("https://other.test", "sig123") is None
+
+
+def test_repository_mapping_memory_adapter_roundtrips():
+    from agent_backend.persistence.repository import RepositoryMappingMemory
+
+    mem = RepositoryMappingMemory(repo())
+    assert mem.recall("https://s.test", "sig") is None
+    mem.remember("https://s.test", "sig", "email", "text")
+    assert mem.recall("https://s.test", "sig") == "email"
+
+
 def token(**overrides):
     now = datetime.now(UTC)
     base = dict(

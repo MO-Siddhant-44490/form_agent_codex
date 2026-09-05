@@ -99,6 +99,24 @@ class ApprovalRow(Base):
     used: Mapped[bool] = mapped_column(default=False)
 
 
+class FieldMappingMemoryRow(Base):
+    """Cross-run episodic memory: the fact KEY that filled a field (identified by
+    a value-free signature) on a site. Value-free by construction — only the
+    fact key (a schema label like "district"), never a user value (invariant 11,
+    §19). Partitioned by site; a composite (site, signature) primary key."""
+
+    __tablename__ = "field_mapping_memory"
+
+    site_key: Mapped[str] = mapped_column(String, primary_key=True)
+    field_signature: Mapped[str] = mapped_column(String, primary_key=True)
+    fact_key: Mapped[str] = mapped_column(String, nullable=False)
+    input_type: Mapped[str] = mapped_column(String, nullable=False)
+    hits: Mapped[int] = mapped_column(Integer, default=1)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_now, onupdate=_now
+    )
+
+
 class DocumentRow(Base):
     __tablename__ = "documents"
 

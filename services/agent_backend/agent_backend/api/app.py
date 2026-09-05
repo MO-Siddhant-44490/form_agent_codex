@@ -15,6 +15,7 @@ from ..document_intelligence.pipeline import DocumentPipeline
 from ..document_intelligence.store import DocumentRejected, DocumentStore
 from ..driver import run_fill
 from ..mapper import DeterministicMapper, Mapper
+from ..memory import MappingMemory
 from ..persistence.repository import Repository, make_engine
 from .auth import AuthError, DevTokenAuth
 from .session_hub import ExtensionSession, ProtocolError
@@ -31,6 +32,9 @@ class AppState:
     # the deterministic mapper for zero-dependency tests; the server wires the
     # env-selected mapper (Bedrock by default) via build_default_mapper().
     mapper: Mapper = field(default_factory=DeterministicMapper)
+    # Cross-run episodic mapping memory (durable). When set, run_fill records
+    # verified field->fact mappings here and the mapper recalls them.
+    memory: "MappingMemory | None" = None
     sessions: dict[str, ExtensionSession] = field(default_factory=dict)
 
 
@@ -65,7 +69,7 @@ def _start_fill(st, session, loop, fact_items, send) -> None:
     def worker():
         transport = WebSocketBrowserTransport(session, loop)
         try:
-            result = run_fill(transport, facts, mapper=st.mapper)
+            result = run_fill(transport, facts, mapper=st.mapper, memory=st.memory)
             payload = {
                 "type": "fill_result",
                 "outcome": result.outcome.value,

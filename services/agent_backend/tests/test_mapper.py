@@ -66,6 +66,61 @@ def test_model_assisted_mapper_resolves_tricky_names_and_options():
     assert len(outcome.model_calls) == 1
 
 
+def test_memory_recall_resolves_without_calling_the_model():
+    """A field this site mapped before is resolved from episodic memory, so the
+    model is never consulted on the repeat visit."""
+    from agent_backend.memory import InMemoryMappingMemory, field_signature, site_key
+
+    transport = FakeTransport(fields=tricky_fields())
+    obs = transport.observe()
+    facts = facts_by_key()
+    mem = InMemoryMappingMemory()
+
+    # First visit: the model maps the obscure names; seed memory as the driver
+    # would after a verified fill (value-free: fact KEY only).
+    first = ModelAssistedMapper(FakeModelAdapter(), memory=mem).map(obs, facts)
+    assert len(first.assignments) == 8 and len(first.model_calls) == 1
+    site = site_key(obs.origin)
+    for field_id, assignment in first.assignments.items():
+        field = next(f for f in obs.fields if f.field_id == field_id)
+        mem.remember(site, field_signature(field), assignment.fact.key, field.input_type)
+
+    # Repeat visit: the model must NOT be called.
+    class ExplodingGateway:
+        def map_fields(self, request):
+            raise AssertionError("model consulted despite a full memory hit")
+
+    second = ModelAssistedMapper(ExplodingGateway(), memory=mem).map(obs, facts)
+    assert len(second.assignments) == len(first.assignments)
+    assert second.model_calls == []
+
+
+def test_memory_hint_ignored_when_the_fact_no_longer_exists():
+    """A remembered mapping is a hint, not authority: if the fact it points to
+    is gone from the current user's facts, memory does not fabricate it — the
+    field falls through to the model like any unresolved field."""
+    from agent_backend.memory import InMemoryMappingMemory, field_signature, site_key
+
+    transport = FakeTransport(fields=tricky_fields())
+    obs = transport.observe()
+    mem = InMemoryMappingMemory()
+    site = site_key(obs.origin)
+    # Remember a mapping to a fact key the next user will NOT have.
+    for field in obs.fields:
+        mem.remember(site, field_signature(field), "full-name", field.input_type)
+
+    called = {"n": 0}
+
+    class CountingDown:
+        def map_fields(self, request):
+            called["n"] += 1
+            raise ModelUnavailable("down")
+
+    # Drop the fact the memory points at; the mapper must still consult the model.
+    ModelAssistedMapper(CountingDown(), memory=mem).map(obs, facts_by_key(drop={"full-name"}))
+    assert called["n"] == 1  # memory did not short-circuit past the missing fact
+
+
 def test_model_unavailable_falls_back_to_abstention():
     class DownGateway:
         def map_fields(self, request):

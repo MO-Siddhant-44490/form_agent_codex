@@ -17,6 +17,7 @@ from form_contracts import (
     UserQuestion,
 )
 
+from .memory import MappingMemory, field_signature, site_key
 from .model_gateway.base import (
     DerivationTarget,
     MappingRequest,
@@ -195,9 +196,15 @@ class ModelAssistedMapper:
     model pass are batched and computed from available facts (age from DOB,
     totals from line items, ...) before falling back to clarification."""
 
-    def __init__(self, gateway: ModelGateway, derivation_engine=None) -> None:
+    def __init__(
+        self,
+        gateway: ModelGateway,
+        derivation_engine=None,
+        memory: MappingMemory | None = None,
+    ) -> None:
         self._gateway = gateway
         self._derivation = derivation_engine
+        self._memory = memory
 
     def map(
         self, observation: PageObservation, facts_by_key: dict[str, DocumentFact]
@@ -215,6 +222,16 @@ class ModelAssistedMapper:
         if not unresolved:
             return outcome
 
+        # Episodic memory (plan.md insight #3): a field this site mapped before
+        # resolves deterministically here — no model call. Recalled mappings are
+        # re-validated (the fact must still exist and _assign must accept it), so
+        # memory is a hint, never authority.
+        if self._memory is not None:
+            unresolved = self._recall(observation, facts_by_key, unresolved, outcome)
+            if not unresolved:
+                self._derive_missing(observation, facts_by_key, outcome)
+                return outcome
+
         unused_facts = [
             fact
             for key, fact in facts_by_key.items()
@@ -228,6 +245,37 @@ class ModelAssistedMapper:
 
         self._derive_missing(observation, facts_by_key, outcome)
         return outcome
+
+    def _recall(
+        self,
+        observation: PageObservation,
+        facts_by_key: dict[str, DocumentFact],
+        unresolved: list[FormField],
+        outcome: MappingOutcome,
+    ) -> list[FormField]:
+        """Assign fields whose signature this site remembered, re-validated
+        against the current facts. Returns the fields still unresolved (which
+        go on to the model). Never assigns from memory alone — a remembered fact
+        that no longer exists, or does not cleanly assign, is left to the model
+        or to a clarification question."""
+        assert self._memory is not None
+        site = site_key(observation.origin)
+        still: list[FormField] = []
+        for field in unresolved:
+            fact_key = self._memory.recall(site, field_signature(field))
+            fact = facts_by_key.get(fact_key) if fact_key else None
+            if fact is None:
+                still.append(field)
+                continue
+            assigned = _assign(field, fact)
+            if isinstance(assigned, Assignment):
+                outcome.assignments[field.field_id] = assigned
+                outcome.questions = [
+                    q for q in outcome.questions if q.field_id != field.field_id
+                ]
+            else:
+                still.append(field)
+        return still
 
     def _model_map(
         self,
