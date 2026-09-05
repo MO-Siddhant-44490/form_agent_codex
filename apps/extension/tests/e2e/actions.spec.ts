@@ -85,7 +85,7 @@ function buildAction(
     risk: "low",
     idempotency_key: `${session.runId}:${fieldId}:${isCheckbox ? gtField.expected_checked : gtField.expected_value}`,
     source_observation_seq: session.obsSeq,
-    approval_token_id: null, upload_file: null,
+    approval_token_id: null, upload_file: null, method_hint: null,
     ...overrides,
   };
 }
@@ -236,7 +236,7 @@ test("SUBMIT is locked without approval and single-use with it", async () => {
       expected_url_prefix: `${FIXTURES}/basic-form/`,
     },
     risk: "high", idempotency_key: `${session.runId}:submit:${seq}`,
-    source_observation_seq: session.obsSeq, approval_token_id: tokenId, upload_file: null,
+    source_observation_seq: session.obsSeq, approval_token_id: tokenId, upload_file: null, method_hint: null,
   });
 
   // 1. No token -> schema-level rejection is bypassed by passing token later;

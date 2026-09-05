@@ -56,6 +56,7 @@ if (!window.__formAgentContent) {
           action_id: action.action_id,
           status: "REJECTED",
           rejection_reason: "origin_mismatch",
+          failure_class: null,
           error: `page origin is ${window.location.origin}`,
           executed_at: new Date().toISOString(),
         },
@@ -70,13 +71,14 @@ if (!window.__formAgentContent) {
           action_id: action.action_id,
           status: "REJECTED",
           rejection_reason: "stale_observation",
+          failure_class: null,
           error: "page fingerprint changed since planning observation",
           executed_at: new Date().toISOString(),
         },
       };
     }
     if (action.kind === "WAIT_FOR_STABLE_PAGE") await waitForStablePage();
-    return { ok: true, result: executeAction(document, action) };
+    return { ok: true, result: await executeAction(document, action) };
   }
 
   chrome.runtime.onMessage.addListener(

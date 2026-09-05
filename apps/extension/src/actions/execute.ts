@@ -10,6 +10,7 @@ import {
   shownMonth,
 } from "../perception/widgets";
 import { deepQueryAll } from "../perception/shadow";
+import { isVisible } from "../perception/visibility";
 import { elWindow, isFormControl, isInputEl, isSelectEl } from "./dom-types";
 import { fireInputEvents, focusThen, setNativeValue } from "./events";
 import { resolveTarget, type Resolved } from "./resolve";
@@ -24,18 +25,23 @@ function result(
     status,
     rejection_reason: null,
     error: null,
+    failure_class: null,
     executed_at: new Date().toISOString(),
     ...extra,
   };
 }
 
-function failed(action: BrowserAction, error: string): ActionResult {
-  return result(action, "FAILED", { error });
+function failed(
+  action: BrowserAction,
+  error: string,
+  failureClass: ActionResult["failure_class"] = null,
+): ActionResult {
+  return result(action, "FAILED", { error, failure_class: failureClass });
 }
 
 const TEXTUAL_KINDS = new Set(["SET_TEXT", "SET_NUMBER", "SET_DATE", "SELECT_OPTION"]);
 
-export function executeAction(doc: Document, action: BrowserAction): ActionResult {
+export async function executeAction(doc: Document, action: BrowserAction): Promise<ActionResult> {
   switch (action.kind) {
     case "SET_TEXT":
     case "SET_NUMBER":
@@ -47,7 +53,7 @@ export function executeAction(doc: Document, action: BrowserAction): ActionResul
     case "DISMISS_DIALOG":
     case "SUBMIT":
     case "NAVIGATE_NEXT":
-      return executeTargeted(doc, action);
+      return await executeTargeted(doc, action);
     case "SCROLL": {
       doc.defaultView?.scrollBy({ top: doc.defaultView.innerHeight * 0.8 });
       return result(action, "EXECUTED");
@@ -61,13 +67,13 @@ export function executeAction(doc: Document, action: BrowserAction): ActionResul
   }
 }
 
-function executeTargeted(doc: Document, action: BrowserAction): ActionResult {
+async function executeTargeted(doc: Document, action: BrowserAction): Promise<ActionResult> {
   if (!action.target) return failed(action, "action has no target");
 
   // Custom ARIA combobox: open the popup and click the matching option,
   // rather than treating it as a native <select>.
   if (action.kind === "SELECT_OPTION" && action.target.input_type === "combobox") {
-    return executeCombobox(doc, action);
+    return await executeCombobox(doc, action);
   }
   // Custom calendar date picker: open it and click the matching day cell.
   if (action.kind === "SET_DATE" && action.target.role === "datepicker") {
@@ -90,12 +96,19 @@ function executeTargeted(doc: Document, action: BrowserAction): ActionResult {
       return failed(action, "target is disabled or read-only");
     }
     if (isSelectEl(el) && !Array.from(el.options).some((o) => o.value === value)) {
-      return failed(action, `option ${value} not present`);
+      return failed(action, `option ${value} not present`, "option_not_found");
     }
+    const alternate = action.method_hint === "alternate";
     focusThen(el, () => {
+      if (alternate) setNativeValue(el, ""); // clear first so frameworks see a real change
       setNativeValue(el, value);
       fireInputEvents(el);
     });
+    if (alternate) {
+      // A second, different signal: on-blur validators/committers that ignored
+      // the programmatic set get another chance to pick up the value.
+      el.dispatchEvent(new (elWindow(el)).FocusEvent("blur", { bubbles: true }));
+    }
     return result(action, "EXECUTED");
   }
 
@@ -119,7 +132,7 @@ function executeTargeted(doc: Document, action: BrowserAction): ActionResult {
           ? [resolved.element]
           : [];
     const match = radios.find((r) => r.value === value);
-    if (!match) return failed(action, `no radio with value ${value}`);
+    if (!match) return failed(action, `no radio with value ${value}`, "option_not_found");
     if (!match.checked) match.click();
     return result(action, "EXECUTED");
   }
@@ -135,7 +148,7 @@ function executeUpload(doc: Document, action: BrowserAction): ActionResult {
   const upload = action.upload_file;
   if (!upload) return failed(action, "UPLOAD_FILE has no file reference");
   const resolved = resolveTarget(doc, action.target);
-  if (resolved.kind !== "element") return failed(action, "file input not found");
+  if (resolved.kind !== "element") return failed(action, "file input not found", "element_not_found");
   const el = resolved.element;
   if (!isInputEl(el) || el.type !== "file") return failed(action, "target is not a file input");
   if (el.disabled) return failed(action, "file input is disabled");
@@ -168,7 +181,7 @@ function executeDatePicker(doc: Document, action: BrowserAction): ActionResult {
   const picker =
     pickers.find((p) => p.element.id === action.target!.field_id) ??
     (pickers.length === 1 ? pickers[0] : undefined);
-  if (!picker) return failed(action, "date picker not found");
+  if (!picker) return failed(action, "date picker not found", "element_not_found");
 
   const el = picker.element;
   const win = elWindow(el);
@@ -179,7 +192,7 @@ function executeDatePicker(doc: Document, action: BrowserAction): ActionResult {
 
   const gridOf = () => detectDatePickers(doc).find((p) => p.element === el)?.grid ?? null;
   let grid = gridOf();
-  if (!grid) return failed(action, "date picker has no calendar grid");
+  if (!grid) return failed(action, "date picker has no calendar grid", "element_not_found");
 
   let cell = findDateCell(grid, value);
   if (!cell) {
@@ -200,12 +213,48 @@ function executeDatePicker(doc: Document, action: BrowserAction): ActionResult {
       btn.click();
     }
   }
-  if (!cell) return failed(action, `no calendar cell for ${value} after month navigation`);
+  if (!cell) return failed(action, `no calendar cell for ${value} after month navigation`, "option_not_found");
   cell.click();
   return result(action, "EXECUTED");
 }
 
-function executeCombobox(doc: Document, action: BrowserAction): ActionResult {
+// Drive the Select2 UI: open the widget and click the rendered result whose
+// text matches the option label. Firing the real click makes Select2 emit its
+// own events, which is what triggers the site's cascading loads (e.g. picking
+// a state loads its districts). Returns null if the UI list did not render
+// (e.g. options load via AJAX) so the caller can fall back.
+async function clickSelect2Option(
+  doc: Document,
+  el: HTMLElement,
+  label: string,
+  action: BrowserAction,
+): Promise<ActionResult | null> {
+  const win = elWindow(el);
+  // Select2 toggles OPEN on mousedown of the selection. Do NOT also fire
+  // mouseup/click here — that would toggle it closed again.
+  if (typeof el.focus === "function") el.focus();
+  el.dispatchEvent(new win.MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+
+  // Select2 renders its result list asynchronously; wait for it to appear.
+  const target = label.trim().toLowerCase();
+  let results: HTMLElement[] = [];
+  for (let i = 0; i < 20; i++) {
+    results = deepQueryAll<HTMLElement>(doc, ".select2-results__option").filter(isVisible);
+    if (results.length > 0) break;
+    await new Promise((r) => win.setTimeout(r, 50));
+  }
+  if (results.length === 0) return null; // nothing rendered -> fall back
+  const match =
+    results.find((o) => (o.textContent?.trim().toLowerCase() ?? "") === target) ??
+    results.find((o) => (o.textContent?.trim().toLowerCase() ?? "").startsWith(target));
+  if (!match) return null; // option not in the rendered list -> fall back
+  // Select2 selects a result on mouseup.
+  match.dispatchEvent(new win.MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+  match.dispatchEvent(new win.MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+  return result(action, "EXECUTED");
+}
+
+async function executeCombobox(doc: Document, action: BrowserAction): Promise<ActionResult> {
   const value = action.resolved_value;
   if (value === null || value === undefined) return failed(action, "no resolved value");
   const combos = detectComboboxes(doc);
@@ -218,23 +267,37 @@ function executeCombobox(doc: Document, action: BrowserAction): ActionResult {
         c.backingSelect?.id === fid ||
         (nm !== null && c.backingSelect?.name === nm),
     ) ?? (combos.length === 1 ? combos[0] : undefined);
-  if (!combo) return failed(action, `combobox not found for ${fid}`);
+  if (!combo) return failed(action, `combobox not found for ${fid}`, "element_not_found");
 
   const el = combo.element;
   const win = elWindow(el);
 
   // Custom dropdowns (Select2/Chosen/selectize) are backed by a hidden native
-  // <select>. Drive that directly: set its value and fire change — this also
-  // triggers the site's onchange (e.g. cascading state -> district).
+  // <select>.
   if (combo.backingSelect) {
     const select = combo.backingSelect;
     const target = value.trim().toLowerCase();
-    const match =
+    const matchOption =
       Array.from(select.options).find((o) => o.value === value) ??
       Array.from(select.options).find((o) => o.value.trim().toLowerCase() === target) ??
       Array.from(select.options).find((o) => (o.textContent?.trim().toLowerCase() ?? "") === target);
-    if (!match) return failed(action, `no option ${value} in backing select`);
-    setNativeValue(select, match.value);
+    if (!matchOption) return failed(action, `no option ${value} in backing select`, "option_not_found");
+    const label = matchOption.textContent?.trim() ?? matchOption.value;
+
+    // Prefer driving the widget's own UI: open it and click the rendered
+    // option, so the SITE's handlers fire (Select2's select event) and any
+    // dependent/cascading load (state -> district) is triggered. Fall back to
+    // setting the hidden select directly if the UI list does not render.
+    const preferUi = action.method_hint === "widget_ui";
+    if (el.classList.contains("select2-selection") || el.closest(".select2-container")) {
+      const uiResult = await clickSelect2Option(doc, el, label, action);
+      if (uiResult) return uiResult;
+      // ALT_SELECT recovery: the native fallback is what failed to fire the
+      // site's handlers last time, so don't silently repeat it — report that
+      // the widget UI did not offer the option so recovery can escalate.
+      if (preferUi) return failed(action, `widget UI did not offer ${label}`, "option_not_found");
+    }
+    setNativeValue(select, matchOption.value);
     select.dispatchEvent(new win.Event("input", { bubbles: true }));
     select.dispatchEvent(new win.Event("change", { bubbles: true }));
     return result(action, "EXECUTED");
@@ -249,7 +312,7 @@ function executeCombobox(doc: Document, action: BrowserAction): ActionResult {
   // Re-scan options now that the popup is open, then click the match.
   const fresh = detectComboboxes(doc).find((c) => c.element === el) ?? combo;
   const listbox = fresh.listbox;
-  if (!listbox) return failed(action, "combobox has no listbox");
+  if (!listbox) return failed(action, "combobox has no listbox", "element_not_found");
   const options = deepQueryAll<HTMLElement>(listbox, '[role="option"]');
   const target = value.trim().toLowerCase();
   const optionKey = (o: HTMLElement) =>
@@ -259,7 +322,7 @@ function executeCombobox(doc: Document, action: BrowserAction): ActionResult {
     options.find((o) => optionKey(o) === value) ??
     options.find((o) => optionKey(o).trim().toLowerCase() === target) ??
     options.find((o) => (o.textContent?.trim().toLowerCase() ?? "") === target);
-  if (!match) return failed(action, `no combobox option for ${value}`);
+  if (!match) return failed(action, `no combobox option for ${value}`, "option_not_found");
   match.click();
   return result(action, "EXECUTED");
 }

@@ -24,6 +24,36 @@ def test_validation_error_goes_straight_to_user():
     assert strategies(p, "f", FailureClass.VALIDATION_ERROR, 2) == [S.ASK_USER, S.STOP]
 
 
+def test_value_not_applied_reapplies_by_a_different_method():
+    p = RecoveryPlanner()
+    assert strategies(p, "f", FailureClass.VALUE_NOT_APPLIED, 3) == [
+        S.REAPPLY,
+        S.REOBSERVE,
+        S.STOP,
+    ]
+
+
+def test_option_not_found_drives_widget_then_waits_then_reformats():
+    # The unfamiliar-widget path: try the UI, wait for a cascade, reformat, ask.
+    p = RecoveryPlanner()
+    assert strategies(p, "f", FailureClass.OPTION_NOT_FOUND, 5) == [
+        S.ALT_SELECT,
+        S.WAIT_CASCADE,
+        S.NORMALIZE_VALUE,
+        S.ASK_USER,
+        S.STOP,
+    ]
+
+
+def test_cascade_pending_waits_for_dependent_options():
+    p = RecoveryPlanner()
+    assert strategies(p, "f", FailureClass.CASCADE_PENDING, 3) == [
+        S.WAIT_CASCADE,
+        S.REOBSERVE,
+        S.STOP,
+    ]
+
+
 def test_element_not_found_ladder():
     p = RecoveryPlanner()
     assert strategies(p, "f", FailureClass.ELEMENT_NOT_FOUND, 3) == [S.REOBSERVE, S.SCROLL, S.STOP]

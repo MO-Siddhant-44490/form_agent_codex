@@ -18,6 +18,18 @@ _LADDERS: dict[FailureClass, list[RecoveryStrategy]] = {
     FailureClass.STALE_ELEMENT: [S.REOBSERVE, S.STOP],
     FailureClass.PAGE_CHANGED: [S.REOBSERVE, S.STOP],
     FailureClass.VALUE_MISMATCH: [S.RETRY, S.REOBSERVE, S.STOP],
+    # The value did not take at all: re-drive it a different way before giving
+    # up, rather than repeating the input method that already silently failed.
+    FailureClass.VALUE_NOT_APPLIED: [S.REAPPLY, S.REOBSERVE, S.STOP],
+    # The expected option is not selectable: drive the widget UI, then wait for
+    # a possible cascade to populate it, then try a reformatted value, then ask.
+    FailureClass.OPTION_NOT_FOUND: [S.ALT_SELECT, S.WAIT_CASCADE, S.NORMALIZE_VALUE, S.ASK_USER],
+    # Dependent options are still loading: wait for the cascade and re-map.
+    FailureClass.CASCADE_PENDING: [S.WAIT_CASCADE, S.REOBSERVE, S.STOP],
+    # NOTE: VALIDATION_ERROR and UNSUPPORTED_WIDGET keep their go-to-user
+    # ladders until the NORMALIZE_VALUE / ALT_SELECT strategies are wired into
+    # the executor (next step); routing them there before then would only
+    # re-attempt an unhandled strategy.
     FailureClass.VALIDATION_ERROR: [S.ASK_USER],
     FailureClass.NAVIGATION_FAILED: [S.WAIT_STABLE, S.REOBSERVE, S.STOP],
     FailureClass.TIMEOUT: [S.WAIT_STABLE, S.RETRY, S.STOP],

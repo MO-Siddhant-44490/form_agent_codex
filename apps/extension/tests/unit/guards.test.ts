@@ -37,7 +37,7 @@ function action(overrides: Partial<BrowserAction> = {}): BrowserAction {
     risk: "low",
     idempotency_key: "run-1:full-name:Ada",
     source_observation_seq: 3,
-    approval_token_id: null, upload_file: null,
+    approval_token_id: null, upload_file: null, method_hint: null,
     ...overrides,
   };
 }
@@ -77,7 +77,7 @@ describe("idempotency (invariant 6)", () => {
   it("returns the recorded result for a duplicate key without re-execution", () => {
     const records = freshRecords();
     const prior: ActionResult = {
-      action_id: "a-0", status: "EXECUTED", rejection_reason: null, error: null,
+      action_id: "a-0", status: "EXECUTED", rejection_reason: null, error: null, failure_class: null,
       executed_at: new Date().toISOString(),
     };
     records.completed.set("run-1:full-name:Ada", prior);
@@ -90,7 +90,7 @@ describe("submission lock (invariant 1)", () => {
   const submit = (overrides: Partial<BrowserAction> = {}) =>
     action({
       kind: "SUBMIT",
-      approval_token_id: "tok-1", upload_file: null,
+      approval_token_id: "tok-1", upload_file: null, method_hint: null,
       idempotency_key: "run-1:submit",
       expected_effect: {
         field_value: null, checked: null, selected_option: null, validation_error: null,

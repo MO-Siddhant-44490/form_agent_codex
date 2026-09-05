@@ -14,7 +14,7 @@ const COMBO_HTML = `
   </div>`;
 
 describe("combobox detection", () => {
-  it("reads options and current value from the listbox and hidden input", () => {
+  it("reads options and current value from the listbox and hidden input", async () => {
     document.body.innerHTML = COMBO_HTML;
     const combos = detectComboboxes(document);
     expect(combos).toHaveLength(1);
@@ -22,7 +22,7 @@ describe("combobox detection", () => {
     expect(combos[0]!.currentValue).toBe("IN");
   });
 
-  it("surfaces a combobox as an option-bearing field", () => {
+  it("surfaces a combobox as an option-bearing field", async () => {
     document.body.innerHTML = COMBO_HTML;
     const field = discoverFields(document).find((f) => f.field_id === "country")!;
     expect(field.input_type).toBe("combobox");
@@ -47,7 +47,7 @@ describe("Select2-style combobox backed by a hidden native select", () => {
       <span id="state-combo" role="combobox" aria-haspopup="true" data-value-input="state">--Select--</span>
     </span>`;
 
-  it("detects the backing select and reads its options", () => {
+  it("detects the backing select and reads its options", async () => {
     document.body.innerHTML = SELECT2_HTML;
     const combo = document.getElementById("state-combo")!;
     expect(findBackingSelect(combo)?.id).toBe("state-select");
@@ -55,7 +55,7 @@ describe("Select2-style combobox backed by a hidden native select", () => {
     expect(info.options.map((o) => o.value)).toEqual(["MH", "GJ"]);
   });
 
-  it("fills a Select2 combobox by driving the hidden select and firing change", () => {
+  it("fills a Select2 combobox by driving the hidden select and firing change", async () => {
     document.body.innerHTML = SELECT2_HTML;
     const select = document.getElementById("state-select") as HTMLSelectElement;
     let changed = false;
@@ -72,16 +72,16 @@ describe("Select2-style combobox backed by a hidden native select", () => {
         validation_error: false, dialog_dismissed: null, navigation_expected: null,
         expected_url_prefix: null },
       risk: "low", idempotency_key: "k", source_observation_seq: null,
-      approval_token_id: null, upload_file: null,
+      approval_token_id: null, upload_file: null, method_hint: null,
     } as const;
 
-    const result = executeAction(document, action);
+    const result = await executeAction(document, action);
     expect(result.status).toBe("EXECUTED");
     expect(select.value).toBe("MH");        // hidden select was driven
     expect(changed).toBe(true);              // change fired (triggers cascading loads)
   });
 
-  it("matches by option text when the value differs (Maharashtra -> MH)", () => {
+  it("matches by option text when the value differs (Maharashtra -> MH)", async () => {
     document.body.innerHTML = SELECT2_HTML;
     const select = document.getElementById("state-select") as HTMLSelectElement;
     const action = {
@@ -95,9 +95,9 @@ describe("Select2-style combobox backed by a hidden native select", () => {
         validation_error: false, dialog_dismissed: null, navigation_expected: null,
         expected_url_prefix: null },
       risk: "low", idempotency_key: "k2", source_observation_seq: null,
-      approval_token_id: null, upload_file: null,
+      approval_token_id: null, upload_file: null, method_hint: null,
     } as const;
-    expect(executeAction(document, action).status).toBe("EXECUTED");
+    expect((await executeAction(document, action)).status).toBe("EXECUTED");
     expect(select.value).toBe("MH");  // matched by option text
   });
 });

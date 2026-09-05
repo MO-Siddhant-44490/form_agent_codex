@@ -19,6 +19,15 @@
       "title": "ActionKind",
       "type": "string"
     },
+    "ActionMethodHint": {
+      "description": "A recovery hint asking the executor to drive an action a *different* way\nthan its default path. Advisory only \u2014 it never widens what the action may\ndo; the policy gate still governs the action unchanged.",
+      "enum": [
+        "alternate",
+        "widget_ui"
+      ],
+      "title": "ActionMethodHint",
+      "type": "string"
+    },
     "ExpectedEffect": {
       "additionalProperties": false,
       "description": "What the verifier should observe after the action (invariant 7).",
@@ -322,6 +331,17 @@
     },
     "kind": {
       "$ref": "#/$defs/ActionKind"
+    },
+    "method_hint": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ActionMethodHint"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "origin": {
       "title": "Origin",

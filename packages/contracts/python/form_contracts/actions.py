@@ -7,6 +7,16 @@ from pydantic import Field, field_validator, model_validator
 
 from .common import RiskLevel, StrictModel, validate_origin
 from .observation import TargetDescriptor
+from .verification import FailureClass
+
+
+class ActionMethodHint(StrEnum):
+    """A recovery hint asking the executor to drive an action a *different* way
+    than its default path. Advisory only — it never widens what the action may
+    do; the policy gate still governs the action unchanged."""
+
+    ALTERNATE = "alternate"  # apply the value via a different input method (REAPPLY)
+    WIDGET_UI = "widget_ui"  # drive the widget's own UI, not the backing control (ALT_SELECT)
 
 
 class ActionKind(StrEnum):
@@ -91,6 +101,10 @@ class BrowserAction(StrictModel):
     approval_token_id: str | None = None
     # Required for UPLOAD_FILE: the file to attach.
     upload_file: "UploadFileRef | None" = None
+    # Advisory recovery hint: on a re-attempt, ask the executor to drive the
+    # action a different way (see ActionMethodHint). Never affects the policy
+    # gate's decision.
+    method_hint: ActionMethodHint | None = None
 
     _origin_ok = field_validator("origin")(validate_origin)
 
@@ -135,6 +149,9 @@ class ActionResult(StrictModel):
     status: ActionResultStatus
     rejection_reason: RejectionReason | None = None
     error: str | None = None
+    # On FAILED, the executor's classification of what went wrong, so recovery
+    # can pick a strategy matched to the cause rather than a generic default.
+    failure_class: FailureClass | None = None
     executed_at: datetime | None = None
 
     @model_validator(mode="after")

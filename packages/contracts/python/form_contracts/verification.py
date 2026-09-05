@@ -19,7 +19,22 @@ class VerificationStatus(StrEnum):
 class FailureClass(StrEnum):
     ELEMENT_NOT_FOUND = "element_not_found"
     STALE_ELEMENT = "stale_element"
+    # A *different* value than expected is present in the field.
     VALUE_MISMATCH = "value_mismatch"
+    # The action ran but the field is still empty afterward — the value did not
+    # take at all (as opposed to VALUE_MISMATCH, where a wrong value stuck).
+    # Recoverable by re-driving the value through a different input method.
+    VALUE_NOT_APPLIED = "value_not_applied"
+    # An enumerated control (select/combobox) does not expose the expected
+    # option: the widget was reachable but the option is absent from its
+    # selectable list. Recoverable by driving the widget UI / matching
+    # tolerantly, or by waiting for a cascade to populate it.
+    OPTION_NOT_FOUND = "option_not_found"
+    # A dependent control's options have not loaded yet (e.g. `district` before
+    # its `state -> district` cascade completes). Recoverable by waiting for the
+    # cascade and re-mapping before re-attempting.
+    CASCADE_PENDING = "cascade_pending"
+    # The site's own validation rejected the value (bad format/constraint).
     VALIDATION_ERROR = "validation_error"
     PAGE_CHANGED = "page_changed"
     NAVIGATION_FAILED = "navigation_failed"
@@ -84,3 +99,10 @@ class RecoveryStrategy(StrEnum):
     WAIT_STABLE = "wait_stable"  # wait for the DOM to settle, then re-attempt
     ASK_USER = "ask_user"  # the value/field needs a human (e.g. bad validation)
     STOP = "stop"  # give up on this field; report it, do not loop
+    # Interaction strategies: these change *how* the value is driven, not just
+    # when — the difference between recovering an unfamiliar widget and blindly
+    # repeating the move that already failed.
+    REAPPLY = "reapply"  # re-drive the value via a different input method
+    ALT_SELECT = "alt_select"  # select by driving the widget UI, not the backing control
+    NORMALIZE_VALUE = "normalize_value"  # reformat the value to a shape the field accepts
+    WAIT_CASCADE = "wait_cascade"  # wait for dependent options to load, re-map, re-attempt

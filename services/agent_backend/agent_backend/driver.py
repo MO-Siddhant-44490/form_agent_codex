@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 
 from form_contracts import (
     ActionKind,
+    ActionMethodHint,
     BrowserAction,
     DocumentFact,
     ExpectedEffect,
@@ -30,7 +31,7 @@ from form_contracts import (
 )
 
 from .mapper import DeterministicMapper, Mapper, MappingOutcome
-from .planner import assignment_satisfied, build_action_for
+from .planner import assignment_satisfied, build_action_for, normalize_value
 from .policy import check_action
 from .recovery import RecoveryDecision, RecoveryPlanner
 from .transport import BrowserTransport
@@ -169,6 +170,29 @@ def _helper_action(
     )
 
 
+def _prepare_reattempt(
+    strategy: RecoveryStrategy,
+    field_id: str,
+    fresh_field,
+    assignment,
+    method_hints: dict[str, ActionMethodHint],
+    value_overrides: dict[str, str],
+) -> None:
+    """Apply an *interaction* recovery strategy by staging how the next attempt
+    on this field is built: a method hint the executor honours, or a reshaped
+    value. The loop rebuilds the action from this state on its next pass."""
+    if strategy is RecoveryStrategy.ALT_SELECT:
+        method_hints[field_id] = ActionMethodHint.WIDGET_UI
+    elif strategy is RecoveryStrategy.REAPPLY:
+        method_hints[field_id] = ActionMethodHint.ALTERNATE
+    elif strategy is RecoveryStrategy.NORMALIZE_VALUE:
+        base = value_overrides.get(field_id, assignment.value)
+        if base is not None:
+            reshaped = normalize_value(base, fresh_field)
+            if reshaped is not None and reshaped != base:
+                value_overrides[field_id] = reshaped
+
+
 def run_fill(
     transport: BrowserTransport,
     facts: list[DocumentFact],
@@ -195,6 +219,11 @@ def run_fill(
     observation = transport.observe()
     sequence = 0
     retries: dict[str, int] = {}
+    # Per-field recovery state staged for the NEXT attempt: a method hint the
+    # executor honours (drive the widget UI / an alternate input method) and a
+    # reshaped value. Cleared once the field succeeds.
+    method_hints: dict[str, ActionMethodHint] = {}
+    value_overrides: dict[str, str] = {}
     blocked_fields: set[str] = set()
     visited_pages: set[str] = set()
     dialogs_tried: dict[str, int] = {}
@@ -205,6 +234,7 @@ def run_fill(
     mapped_fingerprint: str | None = None
 
     stability_waits = 0
+    final_settles = 0
     while result.steps_used < budgets.max_steps:
         if observation.login_detected or observation.captcha_detected:
             result.outcome = RunOutcome.NEEDS_USER
@@ -327,6 +357,28 @@ def run_fill(
                             )
                         )
 
+            # Before concluding the page is done, give any just-triggered
+            # cascade (e.g. filling `state` fires an AJAX that loads the
+            # `district` options) a chance to surface its dependent fields.
+            # Wait for the DOM to settle and re-observe; if that reveals new
+            # fillable assignments, remap and keep going. Bounded (a handful of
+            # waits) so a genuinely complete page still finishes promptly even
+            # when the cascade is slow to start.
+            if final_settles < 3:
+                final_settles += 1
+                sequence += 1
+                transport.execute(
+                    _helper_action(
+                        observation, session, ActionKind.WAIT_FOR_STABLE_PAGE, sequence
+                    )
+                )
+                result.steps_used += 1
+                settled = transport.observe()
+                if settled.page_fingerprint != observation.page_fingerprint:
+                    mapping = None  # new/changed fields -> remap
+                observation = settled
+                continue  # re-enter the loop: fill new fields, else settle again
+
             # Current page is fully filled. Advance to the next page if the
             # form exposes a "next" control; otherwise this is the final page.
             visited_pages.add(observation.page_fingerprint)
@@ -370,12 +422,13 @@ def run_fill(
             run_id=session.run_id,
             tab_id=session.tab_id,
             origin=session.origin,
-            value=assignment.value,
+            value=value_overrides.get(field_id, assignment.value),
             checked=assignment.checked,
             sequence_number=sequence,
             source_observation_seq=observation.observation_seq,
             value_ref=f"fact://{assignment.fact.fact_id}",
             attempt=retries.get(field_id, 0),
+            method_hint=method_hints.get(field_id),
         )
 
         # Deterministic policy gate before dispatch (invariant: every action).
@@ -400,12 +453,14 @@ def run_fill(
             observation = transport.observe()
             continue
         if outcome.result.status == "FAILED":
-            # A failed action goes through bounded recovery, favouring a
-            # wait-then-reobserve: a cascading dropdown's options may still be
-            # loading (e.g. district after state). Only after the ladder is
-            # exhausted is the field blocked and reported for manual handling —
-            # the run never crashes on one field.
-            decision = recovery.plan(field_id, FailureClass.NAVIGATION_FAILED)
+            # A failed action goes through bounded recovery. The executor
+            # classifies WHY it failed (option not found, cascade pending, ...);
+            # use that class so recovery picks a matched strategy, falling back
+            # to a wait-then-reobserve for an unclassified failure. Only after
+            # the ladder is exhausted is the field blocked and reported — the
+            # run never crashes on one field.
+            failure_class = outcome.result.failure_class or FailureClass.NAVIGATION_FAILED
+            decision = recovery.plan(field_id, failure_class)
             result.recovery_decisions.append(decision)
             retries[field_id] = retries.get(field_id, 0) + 1
             if decision.strategy is RecoveryStrategy.STOP:
@@ -423,14 +478,28 @@ def run_fill(
                 )
                 observation = transport.observe()
                 continue
-            if decision.strategy is RecoveryStrategy.WAIT_STABLE:
+            if decision.strategy in (
+                RecoveryStrategy.WAIT_STABLE,
+                RecoveryStrategy.WAIT_CASCADE,
+            ):
                 sequence += 1
                 transport.execute(
                     _helper_action(observation, session, ActionKind.WAIT_FOR_STABLE_PAGE, sequence)
                 )
                 result.steps_used += 1
-            # WAIT_STABLE / REOBSERVE: re-observe (options may now be loaded),
-            # re-map, and the loop re-attempts the field with a fresh key.
+            else:
+                # ALT_SELECT / REAPPLY / NORMALIZE_VALUE stage how the next
+                # attempt is driven (widget UI, alternate method, reshaped value).
+                _prepare_reattempt(
+                    decision.strategy,
+                    field_id,
+                    fresh_field,
+                    assignment,
+                    method_hints,
+                    value_overrides,
+                )
+            # Re-observe (options may now be loaded), re-map, and the loop
+            # re-attempts the field with a fresh key and any staged hint.
             mapping = None
             observation = transport.observe()
             continue
@@ -453,6 +522,8 @@ def run_fill(
         if verification.status is VerificationStatus.SUCCESS:
             result.filled_fields.append(field_id)
             retries.pop(field_id, None)
+            method_hints.pop(field_id, None)
+            value_overrides.pop(field_id, None)
             recovery.clear(field_id)
             continue
         if verification.status in (
@@ -498,19 +569,38 @@ def run_fill(
                 )
                 observation = transport.observe()
                 continue
+            remap = False
             if decision.strategy is RecoveryStrategy.SCROLL:
                 sequence += 1
                 transport.execute(_helper_action(observation, session, ActionKind.SCROLL, sequence))
                 result.steps_used += 1
-            elif decision.strategy is RecoveryStrategy.WAIT_STABLE:
+            elif decision.strategy in (
+                RecoveryStrategy.WAIT_STABLE,
+                RecoveryStrategy.WAIT_CASCADE,
+            ):
                 sequence += 1
                 transport.execute(
                     _helper_action(observation, session, ActionKind.WAIT_FOR_STABLE_PAGE, sequence)
                 )
                 result.steps_used += 1
-            # RETRY / REOBSERVE (and after SCROLL/WAIT): fresh observation, the
-            # loop re-selects the still-unsatisfied field and rebuilds the
-            # action with the bumped attempt.
+                # A cascade wait expects new/changed dependent fields: force a
+                # remap so their freshly-loaded options are picked up.
+                remap = decision.strategy is RecoveryStrategy.WAIT_CASCADE
+            else:
+                # ALT_SELECT / REAPPLY / NORMALIZE_VALUE stage how the next
+                # attempt is driven; RETRY / REOBSERVE just re-attempt.
+                _prepare_reattempt(
+                    decision.strategy,
+                    field_id,
+                    fresh_field,
+                    assignment,
+                    method_hints,
+                    value_overrides,
+                )
+            if remap:
+                mapping = None
+            # Fresh observation; the loop re-selects the still-unsatisfied field
+            # and rebuilds the action with the bumped attempt and any staged hint.
             observation = transport.observe()
             continue
         if verification.status is VerificationStatus.NEEDS_USER:

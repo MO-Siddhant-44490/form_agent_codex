@@ -17,13 +17,13 @@ function action(overrides: Partial<BrowserAction>): BrowserAction {
       field_value: null, checked: null, selected_option: null, validation_error: null,
       dialog_dismissed: null, navigation_expected: null, expected_url_prefix: null,
     },
-    risk: "low", idempotency_key: "k-1", source_observation_seq: null, approval_token_id: null, upload_file: null,
+    risk: "low", idempotency_key: "k-1", source_observation_seq: null, approval_token_id: null, upload_file: null, method_hint: null,
     ...overrides,
   };
 }
 
 describe("SET_TEXT", () => {
-  it("sets value via native setter and fires bubbling input/change (framework compat)", () => {
+  it("sets value via native setter and fires bubbling input/change (framework compat)", async () => {
     document.body.innerHTML = `<form id="f-form"><input id="f" type="text"></form>`;
     const events: string[] = [];
     // Listen on the FORM to prove events bubble (React-style delegation).
@@ -32,31 +32,31 @@ describe("SET_TEXT", () => {
     });
     document.getElementById("f-form")!.addEventListener("change", () => events.push("change"));
 
-    const result = executeAction(document, action({ resolved_value: "Ada Lovelace" }));
+    const result = await executeAction(document, action({ resolved_value: "Ada Lovelace" }));
     expect(result.status).toBe("EXECUTED");
     expect((document.getElementById("f") as HTMLInputElement).value).toBe("Ada Lovelace");
     expect(events).toEqual(["input:Ada Lovelace", "change"]);
   });
 
-  it("fails cleanly on a disabled field", () => {
+  it("fails cleanly on a disabled field", async () => {
     document.body.innerHTML = `<input id="f" type="text" disabled>`;
-    const result = executeAction(document, action({ resolved_value: "x" }));
+    const result = await executeAction(document, action({ resolved_value: "x" }));
     expect(result.status).toBe("FAILED");
     expect(result.error).toContain("disabled");
   });
 
-  it("fails cleanly when the element does not exist", () => {
+  it("fails cleanly when the element does not exist", async () => {
     document.body.innerHTML = ``;
-    const result = executeAction(document, action({ resolved_value: "x" }));
+    const result = await executeAction(document, action({ resolved_value: "x" }));
     expect(result.status).toBe("FAILED");
     expect(result.error).toContain("no element");
   });
 });
 
 describe("SELECT_OPTION", () => {
-  it("selects an existing option", () => {
+  it("selects an existing option", async () => {
     document.body.innerHTML = `<select id="f"><option value="">--</option><option value="IN">India</option></select>`;
-    const result = executeAction(
+    const result = await executeAction(
       document,
       action({ kind: "SELECT_OPTION", resolved_value: "IN" }),
     );
@@ -64,9 +64,9 @@ describe("SELECT_OPTION", () => {
     expect((document.getElementById("f") as HTMLSelectElement).value).toBe("IN");
   });
 
-  it("fails on a missing option instead of guessing", () => {
+  it("fails on a missing option instead of guessing", async () => {
     document.body.innerHTML = `<select id="f"><option value="IN">India</option></select>`;
-    const result = executeAction(
+    const result = await executeAction(
       document,
       action({ kind: "SELECT_OPTION", resolved_value: "XX" }),
     );
@@ -76,7 +76,7 @@ describe("SELECT_OPTION", () => {
 });
 
 describe("SET_CHECKBOX / SET_RADIO", () => {
-  it("checks a checkbox only when state differs (idempotent at DOM level)", () => {
+  it("checks a checkbox only when state differs (idempotent at DOM level)", async () => {
     document.body.innerHTML = `<input id="f" type="checkbox">`;
     const el = document.getElementById("f") as HTMLInputElement;
     let clicks = 0;
@@ -88,17 +88,17 @@ describe("SET_CHECKBOX / SET_RADIO", () => {
         dialog_dismissed: null, navigation_expected: null, expected_url_prefix: null,
       },
     });
-    expect(executeAction(document, a).status).toBe("EXECUTED");
+    expect((await executeAction(document, a)).status).toBe("EXECUTED");
     expect(el.checked).toBe(true);
-    expect(executeAction(document, a).status).toBe("EXECUTED"); // already checked
+    expect((await executeAction(document, a)).status).toBe("EXECUTED"); // already checked
     expect(clicks).toBe(1);
   });
 
-  it("selects the radio matching the resolved value via the group target", () => {
+  it("selects the radio matching the resolved value via the group target", async () => {
     document.body.innerHTML = `
       <input type="radio" name="contact" value="email">
       <input type="radio" name="contact" value="phone">`;
-    const result = executeAction(
+    const result = await executeAction(
       document,
       action({
         kind: "SET_RADIO",
@@ -122,9 +122,9 @@ describe("UPLOAD_FILE", () => {
 
   // The DataTransfer attach path is native to Chrome (jsdom lacks it) and is
   // proven by the real-browser E2E; unit tests cover the guard paths.
-  it("fails when the target is not a file input", () => {
+  it("fails when the target is not a file input", async () => {
     document.body.innerHTML = `<input id="f" type="text">`;
-    const result = executeAction(document, action({ kind: "UPLOAD_FILE", upload_file: uploadRef }));
+    const result = await executeAction(document, action({ kind: "UPLOAD_FILE", upload_file: uploadRef }));
     expect(result.status).toBe("FAILED");
     expect(result.error).toContain("not a file input");
   });

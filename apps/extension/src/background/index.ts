@@ -104,6 +104,7 @@ function rejected(action: BrowserAction, reason: string, detail: string): Action
     status: "REJECTED",
     rejection_reason: reason as ActionResult["rejection_reason"],
     error: detail,
+    failure_class: null,
     executed_at: new Date().toISOString(),
   };
 }

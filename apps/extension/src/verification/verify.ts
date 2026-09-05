@@ -8,6 +8,51 @@ import type {
   VerificationResult,
 } from "@form-agent/contracts";
 
+// A select/combobox stores the option CODE as its value, but the expected
+// value may be the human label (an optimistic cascading-dropdown assignment
+// made before the options loaded, e.g. "Thane" vs code "476"). Treat the field
+// as satisfied when the selected option's label matches, in either direction.
+function optionValueSatisfied(field: FormField, expected: string): boolean {
+  const cur = field.current_value;
+  if (cur === expected) return true;
+  if (cur === null) return false;
+  const norm = (s: string): string => s.trim().toLowerCase();
+  if (norm(cur) === norm(expected)) return true;
+  const opts = field.options ?? [];
+  const labels = field.option_labels ?? [];
+  const idx = opts.indexOf(cur);
+  if (idx >= 0) {
+    const label = labels[idx];
+    if (label !== undefined && norm(label) === norm(expected)) return true;
+  }
+  return false;
+}
+
+// Classify WHY a value did not take, so recovery can pick a matched strategy
+// rather than a generic retry. `expected` is known unsatisfied here.
+function classifyValueFailure(
+  field: FormField,
+  expected: string,
+): NonNullable<VerificationResult["failure_class"]> {
+  const norm = (s: string): string => s.trim().toLowerCase();
+  const cur = field.current_value;
+  const empty = cur === null || cur === "";
+  const options = field.options;
+  if (options !== null && options !== undefined) {
+    // Enumerated control (select/combobox).
+    if (options.length === 0) return "cascade_pending"; // options not loaded yet
+    const labels = field.option_labels ?? [];
+    const matchable = options.some(
+      (o, i) => norm(o) === norm(expected) || (labels[i] !== undefined && norm(labels[i]!) === norm(expected)),
+    );
+    if (!matchable) return "option_not_found"; // the option isn't offered
+    return empty ? "value_not_applied" : "value_mismatch"; // offered but didn't stick / wrong one
+  }
+  // Free-text control: empty means the input never took; otherwise a different
+  // value is present.
+  return empty ? "value_not_applied" : "value_mismatch";
+}
+
 function findField(obs: PageObservation, action: BrowserAction): FormField | undefined {
   const target = action.target;
   if (!target) return undefined;
@@ -102,8 +147,9 @@ export function verifyAction(
 
     const expectedValue = expected.field_value ?? expected.selected_option;
     if (expectedValue !== null && expectedValue !== undefined) {
-      if (field.current_value !== expectedValue) {
-        return verdict(action, "RETRYABLE_FAILURE", "value_mismatch", "RETRY", evidence);
+      if (!optionValueSatisfied(field, expectedValue)) {
+        const cls = classifyValueFailure(field, expectedValue);
+        return verdict(action, "RETRYABLE_FAILURE", cls, "RETRY", evidence);
       }
     }
     if (expected.checked !== null && expected.checked !== undefined) {

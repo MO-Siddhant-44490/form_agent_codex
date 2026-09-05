@@ -5,6 +5,7 @@ truth. JSON Schema and the TypeScript/Zod package are generated from them
 from .actions import (
     MUTATING_KINDS,
     ActionKind,
+    ActionMethodHint,
     ActionResult,
     ActionResultStatus,
     BrowserAction,
@@ -124,6 +125,7 @@ __all__ = [  # noqa: RUF022 - grouped by module
     "FrameInfo",
     "PageObservation",
     "ActionKind",
+    "ActionMethodHint",
     "MUTATING_KINDS",
     "ExpectedEffect",
     "BrowserAction",

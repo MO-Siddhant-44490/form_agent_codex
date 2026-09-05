@@ -10,6 +10,28 @@
       "title": "ActionResultStatus",
       "type": "string"
     },
+    "FailureClass": {
+      "enum": [
+        "element_not_found",
+        "stale_element",
+        "value_mismatch",
+        "value_not_applied",
+        "option_not_found",
+        "cascade_pending",
+        "validation_error",
+        "page_changed",
+        "navigation_failed",
+        "permission_denied",
+        "bot_detection",
+        "login_required",
+        "captcha_required",
+        "timeout",
+        "unsupported_widget",
+        "unknown"
+      ],
+      "title": "FailureClass",
+      "type": "string"
+    },
     "RejectionReason": {
       "enum": [
         "run_mismatch",
@@ -56,6 +78,17 @@
       ],
       "default": null,
       "title": "Executed At"
+    },
+    "failure_class": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/FailureClass"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     },
     "rejection_reason": {
       "anyOf": [

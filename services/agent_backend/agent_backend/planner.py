@@ -4,6 +4,7 @@ calls — model-assisted mapping arrives in Slice 3 behind the same contract."""
 
 from form_contracts import (
     ActionKind,
+    ActionMethodHint,
     BrowserAction,
     DocumentFact,
     ExpectedEffect,
@@ -28,10 +29,18 @@ KIND_FOR_INPUT_TYPE: dict[str, ActionKind] = {
 
 
 def match_fact(field: FormField, facts_by_key: dict[str, DocumentFact]) -> DocumentFact | None:
-    """Slice 1 mapping: exact match on the field's name attribute."""
+    """Slice 1 mapping: match on the field's name attribute, exact first then
+    case-insensitively (a control named "District" is the same field as a
+    "district" fact — case is a presentation detail, not identity)."""
     name = field.target.name_attr
-    if name is not None and name in facts_by_key:
+    if name is None:
+        return None
+    if name in facts_by_key:
         return facts_by_key[name]
+    lowered = name.strip().lower()
+    for key, fact in facts_by_key.items():
+        if key.strip().lower() == lowered:
+            return fact
     return None
 
 
@@ -128,6 +137,7 @@ def build_action_for(
     source_observation_seq: int,
     value_ref: str,
     attempt: int = 0,
+    method_hint: "ActionMethodHint | None" = None,
 ) -> BrowserAction:
     """Build the typed action applying an approved assignment to a field.
     Used by the mapping-driven driver; plan_next_action above remains the
@@ -158,10 +168,67 @@ def build_action_for(
             f"{run_id}:{field.field_id}:{checked if value is None else value}{suffix}"
         ),
         source_observation_seq=source_observation_seq,
+        method_hint=method_hint,
     )
 
 
 def assignment_satisfied(field: FormField, value: str | None, checked: bool | None) -> bool:
     if checked is not None:
         return field.checked == checked
-    return field.current_value == value
+    if field.current_value == value:
+        return True
+    # Option controls store the option CODE; `value` may be the human label
+    # (an optimistic cascading-dropdown assignment made before options loaded,
+    # e.g. "Thane" vs code "476"). Satisfied when the selected option's label
+    # matches, in either direction.
+    cur = field.current_value
+    if value is None or cur is None:
+        return False
+    if cur.strip().lower() == value.strip().lower():
+        return True
+    options = field.options or []
+    labels = field.option_labels or []
+    if cur in options:
+        idx = options.index(cur)
+        if idx < len(labels) and labels[idx].strip().lower() == value.strip().lower():
+            return True
+    return False
+
+
+def normalize_value(value: str, field: FormField) -> str | None:
+    """Reformat a value into a shape the field is more likely to accept, for the
+    NORMALIZE_VALUE recovery strategy. Deterministic and conservative: returns a
+    *different* candidate string, or None when there is nothing safe to change
+    (recovery then falls through to the next rung). No guessing of new content —
+    only reshaping the value we already have.
+
+    - Collapse runs of whitespace and trim (a stray double space or trailing
+      space is a common reason an option/value fails to match).
+    - For a date field, offer the common alternate ISO<->DMY shape so a picker
+      or text input that wants the other format can accept it.
+    """
+    collapsed = " ".join(value.split())
+
+    if field.input_type == "date" or (field.target and field.target.role == "datepicker"):
+        alt = _reshape_date(collapsed)
+        if alt is not None and alt != value:
+            return alt
+
+    if collapsed != value:
+        return collapsed
+    return None
+
+
+def _reshape_date(value: str) -> str | None:
+    """ISO (YYYY-MM-DD) <-> day-first (DD/MM/YYYY), if the input matches one."""
+    import re
+
+    iso = re.fullmatch(r"(\d{4})-(\d{2})-(\d{2})", value)
+    if iso:
+        y, m, d = iso.groups()
+        return f"{d}/{m}/{y}"
+    dmy = re.fullmatch(r"(\d{2})/(\d{2})/(\d{4})", value)
+    if dmy:
+        d, m, y = dmy.groups()
+        return f"{y}-{m}-{d}"
+    return None

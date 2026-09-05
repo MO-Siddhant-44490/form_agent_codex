@@ -45,7 +45,7 @@ function setDob(expectedValue: string): BrowserAction {
       field_value: expectedValue, checked: null, selected_option: null, validation_error: false,
       dialog_dismissed: null, navigation_expected: null, expected_url_prefix: null,
     },
-    risk: "low", idempotency_key: "k", source_observation_seq: 1, approval_token_id: null, upload_file: null,
+    risk: "low", idempotency_key: "k", source_observation_seq: 1, approval_token_id: null, upload_file: null, method_hint: null,
   };
 }
 
@@ -109,7 +109,7 @@ describe("verifyAction", () => {
       ...setDob("unused"),
       kind: "SUBMIT",
       resolved_value: null,
-      approval_token_id: "tok-1", upload_file: null,
+      approval_token_id: "tok-1", upload_file: null, method_hint: null,
       expected_effect: {
         field_value: null, checked: null, selected_option: null, validation_error: null,
         dialog_dismissed: null, navigation_expected: true,
@@ -119,5 +119,42 @@ describe("verifyAction", () => {
     const v = verifyAction(a, observation([field({})]));
     expect(v.status).toBe("RETRYABLE_FAILURE");
     expect(v.failure_class).toBe("navigation_failed");
+  });
+
+  it("SUCCESS when a cascading dropdown's option label matches its selected code", () => {
+    // Optimistic assignment used the human label ("Thane"); the field now
+    // holds the option code ("476"). The selected option's label matches.
+    const combo = field({
+      field_id: "District",
+      input_type: "combobox",
+      current_value: "476",
+      options: ["0", "476"],
+      option_labels: ["--Select one--", "Thane"],
+    });
+    const action = { ...setDob("Thane") };
+    action.target = {
+      field_id: "District", role: "combobox", accessible_name: null, input_type: "combobox",
+      label: null, name_attr: null, autocomplete: null, placeholder: null, bounding_box: null,
+    };
+    const v = verifyAction(action, observation([combo]));
+    expect(v.status).toBe("SUCCESS");
+  });
+
+  it("RETRYABLE when the selected option label does not match the expected value", () => {
+    const combo = field({
+      field_id: "District",
+      input_type: "combobox",
+      current_value: "0",
+      options: ["0", "476"],
+      option_labels: ["--Select one--", "Thane"],
+    });
+    const action = { ...setDob("Thane") };
+    action.target = {
+      field_id: "District", role: "combobox", accessible_name: null, input_type: "combobox",
+      label: null, name_attr: null, autocomplete: null, placeholder: null, bounding_box: null,
+    };
+    const v = verifyAction(action, observation([combo]));
+    expect(v.status).toBe("RETRYABLE_FAILURE");
+    expect(v.failure_class).toBe("value_mismatch");
   });
 });
