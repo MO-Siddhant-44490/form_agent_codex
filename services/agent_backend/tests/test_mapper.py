@@ -66,6 +66,29 @@ def test_model_assisted_mapper_resolves_tricky_names_and_options():
     assert len(outcome.model_calls) == 1
 
 
+def test_autocomplete_grounding_resolves_without_calling_the_model():
+    """A field with an obscure name but a standard autocomplete token is bound
+    to its fact deterministically — no model call."""
+    fields = tricky_fields()  # names fld_0.. so deterministic name-match fails
+    # Give three fields their real autocomplete tokens.
+    by_id = {f.field_id: f for f in fields}
+    by_id["full-name"].autocomplete = "name"
+    by_id["email"].autocomplete = "email"
+    by_id["phone"].autocomplete = "tel"
+
+    class ExplodingGateway:
+        def map_fields(self, request):
+            raise AssertionError("model consulted despite autocomplete grounding")
+
+    transport = FakeTransport(fields=fields)
+    # Only the three grounded facts are present, so the model is never needed.
+    facts = {k: facts_by_key()[k] for k in ("full_name", "email", "phone")}
+    outcome = ModelAssistedMapper(ExplodingGateway()).map(transport.observe(), facts)
+
+    assert set(outcome.assignments) == {"full-name", "email", "phone"}
+    assert outcome.model_calls == []
+
+
 def test_memory_recall_resolves_without_calling_the_model():
     """A field this site mapped before is resolved from episodic memory, so the
     model is never consulted on the repeat visit."""

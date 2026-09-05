@@ -28,6 +28,10 @@ class MappingField:
     required: bool
     options: tuple[str, ...] | None
     nearby_text: str | None
+    # Additional grounding signals (plan.md insight #2): the autocomplete token
+    # is a strong structural hint, the placeholder is often the only visible label.
+    autocomplete: str | None = None
+    placeholder: str | None = None
 
 
 @dataclass(frozen=True)
@@ -65,6 +69,8 @@ def mapping_field_from(form_field: FormField) -> MappingField:
         required=form_field.required,
         options=tuple(form_field.options) if form_field.options else None,
         nearby_text=form_field.nearby_text,
+        autocomplete=form_field.target.autocomplete,
+        placeholder=form_field.target.placeholder,
     )
 
 

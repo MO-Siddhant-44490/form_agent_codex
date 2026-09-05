@@ -48,6 +48,7 @@ class FakeField:
     value: str | None = None
     checked: bool | None = None
     options: list[str] | None = None
+    autocomplete: str | None = None
     # Simulated flakiness: the first N executes do not stick (value_mismatch).
     fail_executions: int = 0
     # When set, the field reports this validation message after being filled,
@@ -180,6 +181,7 @@ class FakeTransport:
                 input_type=f.input_type,
                 label=f.label,
                 name_attr=f.name,
+                autocomplete=f.autocomplete,
             ),
             input_type=f.input_type,
             label=f.label,

@@ -17,6 +17,7 @@ from form_contracts import (
     UserQuestion,
 )
 
+from .grounding import autocomplete_fact
 from .memory import MappingMemory, field_signature, site_key
 from .model_gateway.base import (
     DerivationTarget,
@@ -222,6 +223,15 @@ class ModelAssistedMapper:
         if not unresolved:
             return outcome
 
+        # Structural grounding (plan.md insight #2): the autocomplete attribute
+        # is a W3C-standard, value-free signal that binds a field to a fact more
+        # reliably than a scraped label — resolve it deterministically before
+        # spending a model call.
+        unresolved = self._autocomplete_ground(facts_by_key, unresolved, outcome)
+        if not unresolved:
+            self._derive_missing(observation, facts_by_key, outcome)
+            return outcome
+
         # Episodic memory (plan.md insight #3): a field this site mapped before
         # resolves deterministically here — no model call. Recalled mappings are
         # re-validated (the fact must still exist and _assign must accept it), so
@@ -245,6 +255,30 @@ class ModelAssistedMapper:
 
         self._derive_missing(observation, facts_by_key, outcome)
         return outcome
+
+    def _autocomplete_ground(
+        self,
+        facts_by_key: dict[str, DocumentFact],
+        unresolved: list[FormField],
+        outcome: MappingOutcome,
+    ) -> list[FormField]:
+        """Assign fields whose autocomplete token grounds to a fact, re-validated
+        through _assign. Returns the fields still unresolved."""
+        still: list[FormField] = []
+        for field in unresolved:
+            fact = autocomplete_fact(field, facts_by_key)
+            if fact is None:
+                still.append(field)
+                continue
+            assigned = _assign(field, fact)
+            if isinstance(assigned, Assignment):
+                outcome.assignments[field.field_id] = assigned
+                outcome.questions = [
+                    q for q in outcome.questions if q.field_id != field.field_id
+                ]
+            else:
+                still.append(field)
+        return still
 
     def _recall(
         self,
