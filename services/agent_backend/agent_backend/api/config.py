@@ -1,9 +1,15 @@
-"""Backend configuration from the environment. Sensible in-memory defaults so
-the app boots with zero infrastructure (Slices 1-3); point at Postgres/MinIO
-for durable deployments (plan.md §20)."""
+"""Backend configuration from the environment. Zero-infrastructure defaults
+(local SQLite file + local object store) so the app boots durably with no
+setup; point DATABASE_URL at Postgres/MinIO for a real deployment (plan.md
+§20)."""
 
 import os
 from dataclasses import dataclass
+
+# File-backed by default so cross-run episodic memory (and the audit log,
+# idempotency, approvals) survive a restart. Relative to the working directory;
+# override with DATABASE_URL for Postgres or a fixed absolute path.
+DEFAULT_DATABASE_URL = "sqlite+pysqlite:///./_agent_state/agent_backend.db"
 
 
 @dataclass(frozen=True)
@@ -24,7 +30,7 @@ class BackendConfig:
         from ..model_gateway.factory import DEFAULT_BEDROCK_MODEL_ID
 
         return cls(
-            database_url=os.environ.get("DATABASE_URL", "sqlite+pysqlite:///:memory:"),
+            database_url=os.environ.get("DATABASE_URL", DEFAULT_DATABASE_URL),
             object_store_root=os.environ.get("OBJECT_STORE_ROOT", "./_object_store"),
             encryption_key=key.encode() if key else EncryptedLocalStore.generate_key(),
             host=os.environ.get("HOST", "127.0.0.1"),

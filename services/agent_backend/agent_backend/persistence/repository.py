@@ -31,6 +31,14 @@ def make_engine(url: str = "sqlite+pysqlite:///:memory:") -> Engine:
         from sqlalchemy.pool import StaticPool
 
         kwargs["poolclass"] = StaticPool
+    elif url.startswith("sqlite") and ":memory:" not in url:
+        # File-backed SQLite: create the parent directory so a nested path
+        # (durable memory lives here) works without manual setup.
+        from pathlib import Path
+
+        db_path = url.split(":///", 1)[-1]
+        if db_path:
+            Path(db_path).parent.mkdir(parents=True, exist_ok=True)
     engine = create_engine(url, **kwargs)
     Base.metadata.create_all(engine)
     return engine
