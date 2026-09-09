@@ -410,16 +410,14 @@ async function refill(): Promise<void> {
   chrome.runtime.sendMessage({ type: "FA_FILL_STARTED" });
 }
 
-// Product flow: drive a fill in the active tab via the backend over a
-// WebSocket. The backend does the mapping (Bedrock) and orchestration; this
-// worker answers its observe/execute requests against the real tab and relays
-// the result to the side panel. The socket is kept open (and reconnectable)
-// for follow-up chat.
-async function fillViaBackend(facts: ChatFact[], backendUrl: string): Promise<void> {
-  const fail = (error: string) =>
-    chrome.runtime.sendMessage({ type: "FA_FILL_DONE", result: { type: "fill_error", error } });
-
-  // A fresh Fill supersedes any prior conversation.
+// Attach the active tab, create a backend run, and open the WebSocket — the
+// shared setup for both a fill and a document-first parse. Returns the live
+// session or a human-readable error.
+async function startSession(
+  backendUrl: string,
+  facts: ChatFact[],
+): Promise<{ session: ChatSession } | { error: string }> {
+  // A fresh session supersedes any prior conversation.
   if (chat) {
     try {
       chat.ws.close();
@@ -436,45 +434,59 @@ async function fillViaBackend(facts: ChatFact[], backendUrl: string): Promise<vo
   }
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id || !tab.url) {
-    fail("No active tab. Open the form in a tab first.");
-    return;
-  }
+  if (!tab?.id || !tab.url) return { error: "No active tab. Open the form in a tab first." };
   if (!/^https?:/.test(tab.url)) {
-    fail(`Cannot attach to ${tab.url} — open a normal web page with a form.`);
-    return;
+    return { error: `Cannot attach to ${tab.url} — open a normal web page with a form.` };
   }
   try {
     await attachToTab(tab.id, tab.url);
   } catch (e) {
-    fail(`Could not attach to this tab: ${e instanceof Error ? e.message : String(e)}`);
-    return;
+    return { error: `Could not attach to this tab: ${e instanceof Error ? e.message : String(e)}` };
   }
 
-  // Create a backend run and align this session's run id with it (so the
-  // driver's actions pass the run/tab/origin guards).
   let run_id: string;
   let session_token: string;
   try {
     const runResp = await fetch(`${backendUrl}/runs`, { method: "POST" });
-    if (!runResp.ok) {
-      fail(`Backend returned ${runResp.status}. Is it running at ${backendUrl}?`);
-      return;
-    }
+    if (!runResp.ok) return { error: `Backend returned ${runResp.status}. Is it running at ${backendUrl}?` };
     ({ run_id, session_token } = await runResp.json());
   } catch {
-    fail(`Cannot reach the backend at ${backendUrl}. Start it: uv run python -m agent_backend.api.server`);
-    return;
+    return {
+      error: `Cannot reach the backend at ${backendUrl}. Start it: uv run python -m agent_backend.api.server`,
+    };
   }
   state.runId = run_id;
 
   const session = await connectWs(backendUrl, run_id, session_token, facts);
-  if (!session) {
-    fail("backend connection failed (is it running?)");
+  if (!session) return { error: "backend connection failed (is it running?)" };
+  saveSession();
+  return { session };
+}
+
+// Ensure there is a live session for a document parse (which can happen before
+// any fill): reuse an open one, reconnect a recycled one, or start a new one.
+async function sessionForDocument(backendUrl: string): Promise<ChatSession | null> {
+  if (chat && chat.ws.readyState === WebSocket.OPEN) return chat;
+  if (await ensureConnection()) return chat;
+  const result = await startSession(backendUrl, []);
+  if ("error" in result) {
+    agentMsg(result.error);
+    return null;
+  }
+  return result.session;
+}
+
+// Product flow: drive a fill in the active tab via the backend over a
+// WebSocket. The socket is kept open (and reconnectable) for follow-up chat.
+async function fillViaBackend(facts: ChatFact[], backendUrl: string): Promise<void> {
+  const result = await startSession(backendUrl, facts);
+  if ("error" in result) {
+    chrome.runtime.sendMessage({ type: "FA_FILL_DONE", result: { type: "fill_error", error: result.error } });
     return;
   }
-  saveSession();
+  const session = result.session;
   session.busy = true;
+  lastActionSeq = 0;
   session.ws.send(JSON.stringify({ type: "start_fill", facts }));
   chrome.runtime.sendMessage({ type: "FA_FILL_STARTED" });
 }
@@ -516,12 +528,11 @@ chrome.runtime.onMessage.addListener(
     }
     if (message?.type === "FA_PARSE_DOC") {
       void (async () => {
-        if (!(await ensureConnection()) || !chat) {
-          agentMsg("Click “Fill this form” first, then attach a document to read from.");
-          return;
-        }
+        // Works even before a fill: build the profile from the document first.
+        const session = await sessionForDocument("http://127.0.0.1:8000");
+        if (!session) return;
         agentMsg(`Reading ${message.filename}…`);
-        chat.ws.send(
+        session.ws.send(
           JSON.stringify({
             type: "parse_document",
             filename: message.filename,

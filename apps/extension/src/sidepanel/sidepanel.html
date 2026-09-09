@@ -49,10 +49,10 @@
   <div class="sub">Fills the form in <b>this tab</b>. Never submits — you review first.</div>
 </header>
 
-<details id="profile">
-  <summary>Your profile (key: value per line)</summary>
+<details id="profile" open>
+  <summary>Your profile — upload a document or type it</summary>
   <div class="profile-body">
-    <textarea id="facts" rows="8"></textarea>
+    <textarea id="facts" rows="8" placeholder="Attach a document with 📎 below to build this from — or type one key: value per line (e.g. full_name: Asha Rao)."></textarea>
     <button id="fill" class="primary">Fill this form</button>
   </div>
 </details>
@@ -62,7 +62,7 @@
 <div id="chat"></div>
 
 <form id="composer" autocomplete="off">
-  <label id="attach" class="disabled" title="Attach a document (resume, ID…) to read details from">📎
+  <label id="attach" title="Attach a document (resume, ID…) to build your profile from">📎
     <input id="file" type="file" hidden accept=".pdf,.png,.jpg,.jpeg,.txt,.tiff" />
   </label>
   <input id="chatinput" type="text" placeholder="Answer, or e.g. “set state to Karnataka”, “refill”…" />

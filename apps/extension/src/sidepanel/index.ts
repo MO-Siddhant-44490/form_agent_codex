@@ -10,28 +10,16 @@ const chatEl = document.getElementById("chat")!;
 const composer = document.getElementById("composer") as HTMLFormElement;
 const chatInput = document.getElementById("chatinput") as HTMLInputElement;
 const profile = document.getElementById("profile") as HTMLDetailsElement;
-const attach = document.getElementById("attach") as HTMLLabelElement;
 const fileInput = document.getElementById("file") as HTMLInputElement;
 
 const BACKEND = "http://127.0.0.1:8000";
 
-const DEFAULT_PROFILE = `full_name: Rohan V. Deshmukh
-gender: M
-email: rohan.deshmukh@examplemail.in
-mobile: 9820447631
-phone: 02226734410
-address: Flat 1204 Sunbeam Heights, Plot 27, Palm Beach Road
-sub_locality: Sector 15
-locality: Navi Mumbai
-pincode: 400703
-country: India
-state: Maharashtra
-district: Thane`;
-
+// No fixed profile: it comes from an uploaded document (or what the user types).
+// Only a previously-saved profile is restored.
 try {
-  factsEl.value = localStorage.getItem("fa_profile") || DEFAULT_PROFILE;
+  factsEl.value = localStorage.getItem("fa_profile") || "";
 } catch {
-  factsEl.value = DEFAULT_PROFILE;
+  factsEl.value = "";
 }
 
 function setStatus(text: string, cls = ""): void {
@@ -67,7 +55,8 @@ let composerEnabled = false;
 function setComposerEnabled(on: boolean): void {
   composerEnabled = on;
   chatInput.disabled = !on;
-  attach.classList.toggle("disabled", !on);
+  // Attach stays available even before a fill — you can build the profile from
+  // a document first.
 }
 
 // Merge extracted facts into the profile textarea (add missing keys, update
@@ -92,13 +81,6 @@ function mergeIntoProfile(facts: { key: string; value: string }[]): void {
     /* ignore */
   }
 }
-
-attach.addEventListener("click", (e) => {
-  if (!composerEnabled) {
-    e.preventDefault();
-    bubble("Click “Fill this form” first, then attach a document to read from.", "sys");
-  }
-});
 
 fileInput.addEventListener("change", () => {
   const file = fileInput.files?.[0];
