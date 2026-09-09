@@ -4,9 +4,25 @@
   "version": "0.1.0",
   "description": "Observes forms in the current tab after explicit attach. Slice 1: observation only, no actions.",
   "minimum_chrome_version": "116",
-  "background": { "service_worker": "background.js", "type": "module" },
-  "side_panel": { "default_path": "sidepanel.html" },
-  "action": { "default_title": "Form Agent" },
-  "permissions": ["activeTab", "scripting", "sidePanel", "tabs"],
-  "host_permissions": ["http://127.0.0.1/*", "http://localhost/*"]
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "action": {
+    "default_title": "Form Agent"
+  },
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "sidePanel",
+    "tabs",
+    "storage"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ]
 }

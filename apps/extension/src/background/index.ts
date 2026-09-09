@@ -196,15 +196,44 @@ async function attachActiveTab(): Promise<SessionState> {
 // Public value keys are non-sensitive geography; everything else is personal.
 const PUBLIC_KEYS = new Set(["country", "state", "district", "locality", "pincode", "gender"]);
 
-// A persistent conversational session: the WS stays OPEN after a fill so the
-// user can answer questions and give corrections, and we re-fill on the same
-// tab/run without re-attaching. Facts are held here as the source of truth and
-// resent (merged) on each re-fill.
-type ChatSession = { ws: WebSocket; runId: string; facts: ChatFact[]; busy: boolean };
+// A persistent conversational session. The WebSocket lives in this MV3 service
+// worker, which Chrome terminates when idle — so the essentials are mirrored to
+// chrome.storage.session and the socket is transparently RE-ESTABLISHED on the
+// next command (see ensureConnection). Facts are the source of truth here.
+type ChatSession = {
+  ws: WebSocket;
+  runId: string;
+  token: string;
+  backendUrl: string;
+  facts: ChatFact[];
+  busy: boolean;
+};
 let chat: ChatSession | null = null;
+
+type SavedSession = {
+  runId: string;
+  token: string;
+  backendUrl: string;
+  tabId: number | null;
+  origin: string | null;
+  facts: ChatFact[];
+};
 
 function agentMsg(text: string): void {
   chrome.runtime.sendMessage({ type: "FA_AGENT_MSG", text });
+}
+
+function saveSession(): void {
+  if (!chat) return;
+  const saved: SavedSession = {
+    runId: chat.runId,
+    token: chat.token,
+    backendUrl: chat.backendUrl,
+    tabId: state.tabId,
+    origin: state.origin,
+    facts: chat.facts,
+  };
+  void chrome.storage.session.set({ fa_session: saved }).catch(() => {});
 }
 
 function upsertFact(key: string, value: string): void {
@@ -212,10 +241,130 @@ function upsertFact(key: string, value: string): void {
   const existing = chat.facts.find((f) => f.key === key);
   if (existing) existing.value = value;
   else chat.facts.push({ key, value, sensitivity: PUBLIC_KEYS.has(key) ? "public" : "personal" });
+  saveSession();
 }
 
-function refill(): void {
-  if (!chat || chat.ws.readyState !== WebSocket.OPEN) {
+// One inbound WS envelope handler, shared by first-connect and reconnect.
+function makeOnMessage(runId: string): (event: MessageEvent) => Promise<void> {
+  let inboundSeq = 0;
+  return async (event: MessageEvent) => {
+    const env = JSON.parse(event.data as string);
+    if (env.type === "fill_result" || env.type === "fill_error") {
+      if (chat) chat.busy = false;
+      chrome.runtime.sendMessage({ type: "FA_FILL_DONE", result: env });
+      return;
+    }
+    if (env.type === "chat_result") {
+      if (chat) {
+        chat.busy = false;
+        for (const u of (env.applied as { key: string; value: string }[]) ?? []) {
+          upsertFact(u.key, u.value);
+        }
+      }
+      if (env.reply) agentMsg(String(env.reply));
+      chrome.runtime.sendMessage({ type: "FA_FILL_DONE", result: env });
+      return;
+    }
+    if (env.type === "chat_error") {
+      if (chat) chat.busy = false;
+      chrome.runtime.sendMessage({
+        type: "FA_FILL_DONE",
+        result: { type: "fill_error", error: String(env.error) },
+      });
+      return;
+    }
+    const payload = env.payload ?? {};
+    const reply: Record<string, unknown> = {
+      protocol_version: env.protocol_version,
+      message_type: "action_result",
+      run_id: runId,
+      sent_at: new Date().toISOString(),
+      payload: { _correlation_id: payload._correlation_id, _inbound_seq: ++inboundSeq } as Record<
+        string,
+        unknown
+      >,
+    };
+    const rp = reply.payload as Record<string, unknown>;
+    if (payload.command === "observe") {
+      await observe();
+      rp.observation = state.lastObservation;
+    } else if (payload.command === "execute") {
+      const outcome = await execute(payload.action);
+      rp.result = outcome.result;
+      if (outcome.state.lastObservation) rp.observation = outcome.state.lastObservation;
+      if (outcome.verification) rp.verification = outcome.verification;
+      chrome.runtime.sendMessage({
+        type: "FA_FILL_PROGRESS",
+        field: outcome.result.action_id,
+        status: outcome.result.status,
+        verification: outcome.verification?.status ?? null,
+      });
+    }
+    chat?.ws.send(JSON.stringify(reply));
+  };
+}
+
+// Open (or reopen) the backend WebSocket for a run; resolves the live session
+// once open, or null on failure. Also stores it as the module `chat`.
+function connectWs(
+  backendUrl: string,
+  runId: string,
+  token: string,
+  facts: ChatFact[],
+): Promise<ChatSession | null> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const done = (s: ChatSession | null) => {
+      if (!settled) {
+        settled = true;
+        resolve(s);
+      }
+    };
+    const wsUrl = `${backendUrl.replace(/^http/, "ws")}/ws/${runId}?token=${token}`;
+    const ws = new WebSocket(wsUrl);
+    const session: ChatSession = { ws, runId, token, backendUrl, facts, busy: false };
+    chat = session;
+    ws.onopen = () => {
+      ws.send(JSON.stringify({ type: "hello", origin: state.origin, tab_id: state.tabId }));
+      done(session);
+    };
+    ws.onmessage = makeOnMessage(runId);
+    ws.onclose = () => {
+      if (chat?.ws === ws) chat = null;
+      done(null);
+    };
+    ws.onerror = () => done(null);
+  });
+}
+
+// Ensure a live backend connection, transparently reconnecting from persisted
+// state if the service worker was recycled since the last turn.
+async function ensureConnection(): Promise<boolean> {
+  if (chat && chat.ws.readyState === WebSocket.OPEN) return true;
+  let saved: SavedSession | undefined;
+  try {
+    saved = (await chrome.storage.session.get("fa_session")).fa_session as SavedSession | undefined;
+  } catch {
+    saved = undefined;
+  }
+  if (!saved || saved.tabId === null) return false;
+  // Restore the guard session and re-inject the content script (it may have
+  // survived, but re-injection is safe), then reconnect to the same run.
+  state.attached = true;
+  state.runId = saved.runId;
+  state.tabId = saved.tabId;
+  state.origin = saved.origin;
+  state.error = null;
+  try {
+    await chrome.scripting.executeScript({ target: { tabId: saved.tabId }, files: ["content.js"] });
+  } catch {
+    /* content script already present */
+  }
+  return (await connectWs(saved.backendUrl, saved.runId, saved.token, saved.facts ?? [])) !== null;
+}
+
+async function refill(): Promise<void> {
+  if (!(await ensureConnection()) || !chat) {
     agentMsg("No active session — click “Fill this form” to start.");
     return;
   }
@@ -231,7 +380,8 @@ function refill(): void {
 // Product flow: drive a fill in the active tab via the backend over a
 // WebSocket. The backend does the mapping (Bedrock) and orchestration; this
 // worker answers its observe/execute requests against the real tab and relays
-// the result to the side panel. The socket is kept open for follow-up chat.
+// the result to the side panel. The socket is kept open (and reconnectable)
+// for follow-up chat.
 async function fillViaBackend(facts: ChatFact[], backendUrl: string): Promise<void> {
   const fail = (error: string) =>
     chrome.runtime.sendMessage({ type: "FA_FILL_DONE", result: { type: "fill_error", error } });
@@ -244,6 +394,11 @@ async function fillViaBackend(facts: ChatFact[], backendUrl: string): Promise<vo
       /* ignore */
     }
     chat = null;
+  }
+  try {
+    await chrome.storage.session.remove("fa_session");
+  } catch {
+    /* ignore */
   }
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
@@ -279,84 +434,15 @@ async function fillViaBackend(facts: ChatFact[], backendUrl: string): Promise<vo
   }
   state.runId = run_id;
 
-  const wsUrl = `${backendUrl.replace(/^http/, "ws")}/ws/${run_id}?token=${session_token}`;
-  const ws = new WebSocket(wsUrl);
-  chat = { ws, runId: run_id, facts, busy: true };
-  let inboundSeq = 0;
-
-  ws.onopen = () => {
-    ws.send(JSON.stringify({ type: "hello", origin: state.origin, tab_id: state.tabId }));
-    ws.send(JSON.stringify({ type: "start_fill", facts }));
-    chrome.runtime.sendMessage({ type: "FA_FILL_STARTED" });
-  };
-
-  ws.onmessage = async (event) => {
-    const env = JSON.parse(event.data as string);
-    if (env.type === "fill_result" || env.type === "fill_error") {
-      if (chat) chat.busy = false; // ready for the next chat turn; keep the socket open
-      chrome.runtime.sendMessage({ type: "FA_FILL_DONE", result: env });
-      return;
-    }
-    if (env.type === "chat_result") {
-      // Keep our fact list in sync with what the interpreter applied.
-      if (chat) {
-        chat.busy = false;
-        for (const u of (env.applied as { key: string; value: string }[]) ?? []) {
-          upsertFact(u.key, u.value);
-        }
-      }
-      if (env.reply) agentMsg(String(env.reply));
-      chrome.runtime.sendMessage({ type: "FA_FILL_DONE", result: env });
-      return;
-    }
-    if (env.type === "chat_error") {
-      if (chat) chat.busy = false;
-      chrome.runtime.sendMessage({
-        type: "FA_FILL_DONE",
-        result: { type: "fill_error", error: String(env.error) },
-      });
-      return;
-    }
-    const payload = env.payload ?? {};
-    const reply: Record<string, unknown> = {
-      protocol_version: env.protocol_version,
-      message_type: "action_result",
-      run_id,
-      sent_at: new Date().toISOString(),
-      payload: { _correlation_id: payload._correlation_id, _inbound_seq: ++inboundSeq } as Record<
-        string,
-        unknown
-      >,
-    };
-    const rp = reply.payload as Record<string, unknown>;
-    if (payload.command === "observe") {
-      await observe();
-      rp.observation = state.lastObservation;
-    } else if (payload.command === "execute") {
-      const outcome = await execute(payload.action);
-      rp.result = outcome.result;
-      if (outcome.state.lastObservation) rp.observation = outcome.state.lastObservation;
-      if (outcome.verification) rp.verification = outcome.verification;
-      // Report per-field progress to the panel as it fills.
-      chrome.runtime.sendMessage({
-        type: "FA_FILL_PROGRESS",
-        field: outcome.result.action_id,
-        status: outcome.result.status,
-        verification: outcome.verification?.status ?? null,
-      });
-    }
-    ws.send(JSON.stringify(reply));
-  };
-
-  ws.onclose = () => {
-    if (chat?.ws === ws) chat = null;
-  };
-  ws.onerror = () => {
-    chrome.runtime.sendMessage({
-      type: "FA_FILL_DONE",
-      result: { type: "fill_error", error: "backend connection failed (is it running?)" },
-    });
-  };
+  const session = await connectWs(backendUrl, run_id, session_token, facts);
+  if (!session) {
+    fail("backend connection failed (is it running?)");
+    return;
+  }
+  saveSession();
+  session.busy = true;
+  session.ws.send(JSON.stringify({ type: "start_fill", facts }));
+  chrome.runtime.sendMessage({ type: "FA_FILL_STARTED" });
 }
 
 chrome.runtime.onMessage.addListener(
@@ -379,25 +465,36 @@ chrome.runtime.onMessage.addListener(
       return false;
     }
     if (message?.type === "FA_ANSWER") {
-      // A direct answer to a question: record the fact and re-fill.
-      upsertFact(message.key, message.value);
-      agentMsg(`Got it — ${message.key} = ${message.value}. Re-filling…`);
-      refill();
+      // A direct answer to a question: record the fact and re-fill (reconnecting
+      // first if the worker was recycled).
+      void (async () => {
+        if (!(await ensureConnection()) || !chat) {
+          agentMsg("No active session — click “Fill this form” to start.");
+          return;
+        }
+        upsertFact(message.key, message.value);
+        agentMsg(`Got it — ${message.key} = ${message.value}. Re-filling…`);
+        await refill();
+      })();
       sendResponse(state);
       return false;
     }
     if (message?.type === "FA_CHAT") {
       // Reasoning happens on the backend (it has the model + the live form
-      // state). Forward the message with the current facts and let it plan.
-      if (!chat || chat.ws.readyState !== WebSocket.OPEN) {
-        agentMsg("No active session — click “Fill this form” to start.");
-      } else if (chat.busy) {
-        agentMsg("Still working on the last request — one moment.");
-      } else {
+      // state). Reconnect if needed, then forward with the current facts.
+      void (async () => {
+        if (!(await ensureConnection()) || !chat) {
+          agentMsg("No active session — click “Fill this form” to start.");
+          return;
+        }
+        if (chat.busy) {
+          agentMsg("Still working on the last request — one moment.");
+          return;
+        }
         chat.busy = true;
         chat.ws.send(JSON.stringify({ type: "chat", text: message.text, facts: chat.facts }));
         chrome.runtime.sendMessage({ type: "FA_FILL_STARTED" });
-      }
+      })();
       sendResponse(state);
       return false;
     }
