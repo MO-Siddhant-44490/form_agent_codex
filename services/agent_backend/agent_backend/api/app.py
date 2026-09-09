@@ -75,7 +75,15 @@ def _start_fill(st, session, loop, fact_items, send) -> None:
                 "outcome": result.outcome.value,
                 "filled": result.filled_fields,
                 "questions": [
-                    {"field_id": q.field_id, "kind": q.kind.value, "prompt": q.prompt}
+                    {
+                        "field_id": q.field_id,
+                        "kind": q.kind.value,
+                        "prompt": q.prompt,
+                        # fact_keys lets the panel route an answer to the right
+                        # fact; options let it render choices for a confirmation.
+                        "fact_keys": list(q.fact_keys),
+                        "options": list(q.options) if q.options else None,
+                    }
                     for q in result.questions
                 ],
                 "validation_issues": [

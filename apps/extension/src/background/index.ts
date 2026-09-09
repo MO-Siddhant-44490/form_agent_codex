@@ -11,8 +11,10 @@ import {
   type PageObservation,
 } from "@form-agent/contracts";
 import { checkAction, type GuardRecords, type GuardSession } from "../guards/session-guards";
+import { parseIntent } from "./intent";
 import { verifyAction } from "../verification/verify";
 import type {
+  ChatFact,
   ExecuteOutcome,
   ExecuteRequest,
   ExecuteResponse,
@@ -192,13 +194,58 @@ async function attachActiveTab(): Promise<SessionState> {
   }
 }
 
+// Public value keys are non-sensitive geography; everything else is personal.
+const PUBLIC_KEYS = new Set(["country", "state", "district", "locality", "pincode", "gender"]);
+
+// A persistent conversational session: the WS stays OPEN after a fill so the
+// user can answer questions and give corrections, and we re-fill on the same
+// tab/run without re-attaching. Facts are held here as the source of truth and
+// resent (merged) on each re-fill.
+type ChatSession = { ws: WebSocket; runId: string; facts: ChatFact[]; busy: boolean };
+let chat: ChatSession | null = null;
+
+function agentMsg(text: string): void {
+  chrome.runtime.sendMessage({ type: "FA_AGENT_MSG", text });
+}
+
+function upsertFact(key: string, value: string): void {
+  if (!chat) return;
+  const existing = chat.facts.find((f) => f.key === key);
+  if (existing) existing.value = value;
+  else chat.facts.push({ key, value, sensitivity: PUBLIC_KEYS.has(key) ? "public" : "personal" });
+}
+
+function refill(): void {
+  if (!chat || chat.ws.readyState !== WebSocket.OPEN) {
+    agentMsg("No active session — click “Fill this form” to start.");
+    return;
+  }
+  if (chat.busy) {
+    agentMsg("Still working on the last request — one moment.");
+    return;
+  }
+  chat.busy = true;
+  chat.ws.send(JSON.stringify({ type: "start_fill", facts: chat.facts }));
+  chrome.runtime.sendMessage({ type: "FA_FILL_STARTED" });
+}
+
 // Product flow: drive a fill in the active tab via the backend over a
 // WebSocket. The backend does the mapping (Bedrock) and orchestration; this
 // worker answers its observe/execute requests against the real tab and relays
-// the result to the side panel.
-async function fillViaBackend(facts: unknown[], backendUrl: string): Promise<void> {
+// the result to the side panel. The socket is kept open for follow-up chat.
+async function fillViaBackend(facts: ChatFact[], backendUrl: string): Promise<void> {
   const fail = (error: string) =>
     chrome.runtime.sendMessage({ type: "FA_FILL_DONE", result: { type: "fill_error", error } });
+
+  // A fresh Fill supersedes any prior conversation.
+  if (chat) {
+    try {
+      chat.ws.close();
+    } catch {
+      /* ignore */
+    }
+    chat = null;
+  }
 
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id || !tab.url) {
@@ -235,6 +282,7 @@ async function fillViaBackend(facts: unknown[], backendUrl: string): Promise<voi
 
   const wsUrl = `${backendUrl.replace(/^http/, "ws")}/ws/${run_id}?token=${session_token}`;
   const ws = new WebSocket(wsUrl);
+  chat = { ws, runId: run_id, facts, busy: true };
   let inboundSeq = 0;
 
   ws.onopen = () => {
@@ -246,8 +294,8 @@ async function fillViaBackend(facts: unknown[], backendUrl: string): Promise<voi
   ws.onmessage = async (event) => {
     const env = JSON.parse(event.data as string);
     if (env.type === "fill_result" || env.type === "fill_error") {
+      if (chat) chat.busy = false; // ready for the next chat turn; keep the socket open
       chrome.runtime.sendMessage({ type: "FA_FILL_DONE", result: env });
-      ws.close();
       return;
     }
     const payload = env.payload ?? {};
@@ -281,6 +329,9 @@ async function fillViaBackend(facts: unknown[], backendUrl: string): Promise<voi
     ws.send(JSON.stringify(reply));
   };
 
+  ws.onclose = () => {
+    if (chat?.ws === ws) chat = null;
+  };
   ws.onerror = () => {
     chrome.runtime.sendMessage({
       type: "FA_FILL_DONE",
@@ -305,6 +356,29 @@ chrome.runtime.onMessage.addListener(
     }
     if (message?.type === "FA_FILL") {
       void fillViaBackend(message.facts ?? [], message.backendUrl ?? "http://127.0.0.1:8000");
+      sendResponse(state);
+      return false;
+    }
+    if (message?.type === "FA_ANSWER") {
+      // A direct answer to a question: record the fact and re-fill.
+      upsertFact(message.key, message.value);
+      agentMsg(`Got it — ${message.key} = ${message.value}. Re-filling…`);
+      refill();
+      sendResponse(state);
+      return false;
+    }
+    if (message?.type === "FA_CHAT") {
+      const intent = parseIntent(message.text);
+      if (intent.kind === "refill") {
+        agentMsg("Re-filling this form…");
+        refill();
+      } else if (intent.kind === "set") {
+        upsertFact(intent.key, intent.value);
+        agentMsg(`Updated ${intent.key} = ${intent.value}. Re-filling…`);
+        refill();
+      } else {
+        agentMsg('I can update a value or re-fill. Try “set state to Karnataka”, “email: a@b.com”, or “refill”.');
+      }
       sendResponse(state);
       return false;
     }

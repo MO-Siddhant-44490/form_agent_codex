@@ -25,11 +25,18 @@ export type ExecuteResponse =
   | { ok: true; result: ActionResult }
   | { ok: false; error: string };
 
+export type ChatFact = { key: string; value: string; sensitivity: string };
+
 export type PanelCommand =
   | { type: "FA_ATTACH_ACTIVE_TAB" }
   | { type: "FA_OBSERVE_NOW" }
   | { type: "FA_GET_STATE" }
-  | { type: "FA_FILL"; facts: unknown[]; backendUrl?: string };
+  | { type: "FA_FILL"; facts: ChatFact[]; backendUrl?: string }
+  // Free-text chat: a correction/command the agent parses ("set state to X",
+  // "refill"). Handled in the background against the open session.
+  | { type: "FA_CHAT"; text: string }
+  // A direct answer to a question: upsert this fact and re-fill.
+  | { type: "FA_ANSWER"; key: string; value: string };
 
 export type SessionState = {
   attached: boolean;

@@ -1,18 +1,18 @@
-// Side panel: the product surface. Enter a profile, click "Fill this form",
-// watch it fill THIS tab, and see the questions it needs you to answer.
-// Orchestration + mapping run in the local backend; this panel triggers it and
-// shows progress. It never submits.
-import type { SessionState } from "../shared/messages";
+// Side panel: a chat surface over the fill. Click "Fill this form" to start,
+// then talk to the agent — answer its questions, correct a value
+// ("set state to Karnataka"), or say "refill". It never submits.
+import type { ChatFact, SessionState } from "../shared/messages";
 
 const factsEl = document.getElementById("facts") as HTMLTextAreaElement;
 const fillBtn = document.getElementById("fill") as HTMLButtonElement;
 const statusEl = document.getElementById("status")!;
-const logEl = document.getElementById("log")!;
-const questionsEl = document.getElementById("questions")!;
+const chatEl = document.getElementById("chat")!;
+const composer = document.getElementById("composer") as HTMLFormElement;
+const chatInput = document.getElementById("chatinput") as HTMLInputElement;
+const profile = document.getElementById("profile") as HTMLDetailsElement;
 
 const BACKEND = "http://127.0.0.1:8000";
 
-// A default demo profile so the panel is usable immediately.
 const DEFAULT_PROFILE = `full_name: Rohan V. Deshmukh
 gender: M
 email: rohan.deshmukh@examplemail.in
@@ -37,17 +37,18 @@ function setStatus(text: string, cls = ""): void {
   statusEl.textContent = text;
 }
 
-function esc(s: string): string {
+function bubble(text: string, who: "agent" | "user" | "sys"): void {
   const d = document.createElement("div");
-  d.textContent = s;
-  return d.innerHTML;
+  d.className = `msg ${who}`;
+  d.textContent = text;
+  chatEl.appendChild(d);
+  chatEl.scrollTop = chatEl.scrollHeight;
 }
 
-// Public value keys are non-sensitive geography; everything else is personal.
 const PUBLIC_KEYS = new Set(["country", "state", "district", "locality", "pincode", "gender"]);
 
-function parseFacts(text: string): { key: string; value: string; sensitivity: string }[] {
-  const facts: { key: string; value: string; sensitivity: string }[] = [];
+function parseFacts(text: string): ChatFact[] {
+  const facts: ChatFact[] = [];
   for (const line of text.split("\n")) {
     const idx = line.indexOf(":");
     if (idx === -1) continue;
@@ -58,6 +59,78 @@ function parseFacts(text: string): { key: string; value: string; sensitivity: st
     }
   }
   return facts;
+}
+
+let composerEnabled = false;
+function setComposerEnabled(on: boolean): void {
+  composerEnabled = on;
+  chatInput.disabled = !on;
+}
+
+// Render a question the agent needs answered, with an inline answer input that
+// routes to the right fact. `fact_keys` (from the backend) or the field id give
+// the fact key the answer should update.
+function renderQuestion(q: {
+  field_id: string;
+  kind: string;
+  prompt: string;
+  fact_keys?: string[];
+  options?: string[] | null;
+}): void {
+  const key = (q.fact_keys && q.fact_keys[0]) || slug(q.field_id);
+  const wrap = document.createElement("div");
+  wrap.className = "q";
+  const title = document.createElement("b");
+  title.textContent = q.prompt || q.field_id;
+  wrap.appendChild(title);
+
+  const row = document.createElement("div");
+  row.className = "row";
+  const input = document.createElement("input");
+  input.type = "text";
+  input.placeholder = `Value for “${key}”`;
+  const btn = document.createElement("button");
+  btn.textContent = "Answer";
+  btn.className = "chip";
+  const submit = () => {
+    const value = input.value.trim();
+    if (!value) return;
+    bubble(`${key}: ${value}`, "user");
+    void chrome.runtime.sendMessage({ type: "FA_ANSWER", key, value });
+    wrap.remove();
+  };
+  btn.addEventListener("click", submit);
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") submit();
+  });
+  row.appendChild(input);
+  row.appendChild(btn);
+  wrap.appendChild(row);
+
+  // Enumerated confirmation: offer the options as quick chips.
+  if (q.options && q.options.length > 0 && q.options.length <= 12) {
+    const chips = document.createElement("div");
+    chips.className = "row";
+    for (const opt of q.options) {
+      if (!opt) continue;
+      const c = document.createElement("button");
+      c.className = "chip";
+      c.textContent = opt;
+      c.addEventListener("click", () => {
+        bubble(`${key}: ${opt}`, "user");
+        void chrome.runtime.sendMessage({ type: "FA_ANSWER", key, value: opt });
+        wrap.remove();
+      });
+      chips.appendChild(c);
+    }
+    wrap.appendChild(chips);
+  }
+  chatEl.appendChild(wrap);
+  chatEl.scrollTop = chatEl.scrollHeight;
+}
+
+function slug(s: string): string {
+  return s.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 }
 
 let filledCount = 0;
@@ -73,60 +146,91 @@ fillBtn.addEventListener("click", () => {
     setStatus("Add at least one 'key: value' line to your profile.", "warn");
     return;
   }
-  logEl.innerHTML = "";
-  questionsEl.innerHTML = "";
+  chatEl.innerHTML = "";
   filledCount = 0;
   fillBtn.disabled = true;
+  setComposerEnabled(false);
+  profile.open = false;
+  bubble("Filling this form from your profile…", "agent");
   setStatus("Attaching to this tab and starting…", "");
   void chrome.runtime.sendMessage({ type: "FA_FILL", facts, backendUrl: BACKEND });
 });
 
-// Live updates from the background as the fill proceeds.
+composer.addEventListener("submit", (e) => {
+  e.preventDefault();
+  const text = chatInput.value.trim();
+  if (!text || !composerEnabled) return;
+  bubble(text, "user");
+  chatInput.value = "";
+  void chrome.runtime.sendMessage({ type: "FA_CHAT", text });
+});
+
+// Live updates from the background.
 chrome.runtime.onMessage.addListener((msg: Record<string, unknown>) => {
   if (msg.type === "FA_FILL_STARTED") {
-    setStatus("Filling the form in this tab…", "");
+    fillBtn.disabled = true;
+    setComposerEnabled(false);
+    setStatus("Working on the form in this tab…", "");
   } else if (msg.type === "FA_FILL_PROGRESS") {
     if (msg.status === "EXECUTED" && msg.verification === "SUCCESS") {
       filledCount += 1;
-      const d = document.createElement("div");
-      d.textContent = `✓ filled and verified field ${filledCount}`;
-      logEl.appendChild(d);
+      setStatus(`Filling… ${filledCount} field(s) done.`, "");
     }
+  } else if (msg.type === "FA_AGENT_MSG") {
+    bubble(String(msg.text), "agent");
   } else if (msg.type === "FA_FILL_DONE") {
     fillBtn.disabled = false;
     const result = msg.result as Record<string, unknown>;
     if (result.type === "fill_error") {
-      setStatus(`Error: ${esc(String(result.error))}`, "err");
+      setStatus(`Error: ${String(result.error)}`, "err");
+      bubble(`Something went wrong: ${String(result.error)}`, "agent");
       return;
     }
     const outcome = String(result.outcome);
     const filled = (result.filled as string[]) ?? [];
-    const questions = (result.questions as { field_id: string; prompt: string }[]) ?? [];
+    const questions =
+      (result.questions as {
+        field_id: string;
+        kind: string;
+        prompt: string;
+        fact_keys?: string[];
+        options?: string[] | null;
+      }[]) ?? [];
+    const issues =
+      (result.validation_issues as { field_id: string; label?: string; detail: string }[]) ?? [];
+
     if (outcome === "COMPLETED") {
-      setStatus(`Done — ${filled.length} fields filled and verified. Nothing submitted; review and submit yourself.`, "ok");
+      setStatus(`Done — ${filled.length} fields filled. Nothing submitted.`, "ok");
+      bubble(`Filled ${filled.length} field(s). Everything checks out — review and submit yourself.`, "agent");
     } else if (outcome === "NEEDS_USER") {
-      setStatus(`Filled ${filled.length} fields. ${questions.length} item(s) need you (below). Nothing submitted.`, "warn");
+      const need = questions.length + issues.length;
+      setStatus(`Filled ${filled.length}. ${need} item(s) need you. Nothing submitted.`, "warn");
+      bubble(
+        `Filled ${filled.length} field(s). ${need} item(s) need your input — answer below, or just tell me the value.`,
+        "agent",
+      );
     } else {
-      setStatus(`Finished: ${outcome}. ${esc(String(result.detail ?? ""))}`, "warn");
+      setStatus(`Finished: ${outcome}. ${String(result.detail ?? "")}`, "warn");
+      bubble(`Finished: ${outcome}. ${String(result.detail ?? "")}`, "agent");
     }
-    for (const q of questions) {
-      const div = document.createElement("div");
-      div.className = "q";
-      div.innerHTML = `<b>${esc(q.field_id)}</b>${esc(q.prompt)}`;
-      questionsEl.appendChild(div);
-    }
-    const issues = (result.validation_issues as { field_id: string; label?: string; detail: string }[]) ?? [];
+
+    for (const q of questions) renderQuestion(q);
     for (const iss of issues) {
       const div = document.createElement("div");
-      div.className = "q";
-      div.style.background = "#fde2e1";
-      div.style.borderColor = "#f0a8a4";
-      div.innerHTML = `<b>⚠ ${esc(iss.label || iss.field_id)}</b>${esc(iss.detail)}`;
-      questionsEl.appendChild(div);
+      div.className = "q err";
+      div.innerHTML = "";
+      const b = document.createElement("b");
+      b.textContent = `⚠ ${iss.label || iss.field_id}`;
+      const p = document.createElement("div");
+      p.textContent = iss.detail;
+      div.appendChild(b);
+      div.appendChild(p);
+      chatEl.appendChild(div);
     }
-    if (outcome === "NEEDS_USER" && issues.length > 0) {
-      setStatus(`Filled ${filled.length} fields. ${questions.length + issues.length} item(s) need you (incl. ${issues.length} validation issue(s)). Nothing submitted.`, "warn");
-    }
+    chatEl.scrollTop = chatEl.scrollHeight;
+    // Ready for the next conversational turn.
+    setComposerEnabled(true);
+    chatInput.focus();
   }
 });
 
