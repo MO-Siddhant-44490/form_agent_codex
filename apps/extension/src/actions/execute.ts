@@ -251,6 +251,17 @@ async function clickSelect2Option(
   // Select2 selects a result on mouseup.
   match.dispatchEvent(new win.MouseEvent("mousedown", { bubbles: true, cancelable: true }));
   match.dispatchEvent(new win.MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+  // Select2 normally collapses on select, but a cascade re-render can leave the
+  // dropdown open over the page. If it's still open, close it explicitly (an
+  // outside pointer-down / Escape) so only the chosen value shows.
+  await new Promise((r) => win.setTimeout(r, 40));
+  if (deepQueryAll<HTMLElement>(doc, ".select2-container--open").length > 0) {
+    el.dispatchEvent(
+      new win.KeyboardEvent("keydown", { bubbles: true, key: "Escape", keyCode: 27 }),
+    );
+    doc.dispatchEvent(new win.MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+    doc.dispatchEvent(new win.MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+  }
   return result(action, "EXECUTED");
 }
 

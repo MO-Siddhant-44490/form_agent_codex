@@ -390,6 +390,10 @@ async function refill(): Promise<void> {
     return;
   }
   chat.busy = true;
+  // Each backend fill/edit starts its own action sequence at 1; reset the
+  // guard's counter so those actions aren't rejected as stale (the session is
+  // reused across turns without re-attaching).
+  lastActionSeq = 0;
   chat.ws.send(JSON.stringify({ type: "start_fill", facts: chat.facts }));
   chrome.runtime.sendMessage({ type: "FA_FILL_STARTED" });
 }
@@ -511,6 +515,7 @@ chrome.runtime.onMessage.addListener(
           return;
         }
         chat.busy = true;
+        lastActionSeq = 0; // fresh action sequence for this edit (see refill)
         chat.ws.send(
           JSON.stringify({
             type: "chat",

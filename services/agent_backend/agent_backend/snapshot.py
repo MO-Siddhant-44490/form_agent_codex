@@ -64,7 +64,9 @@ def build_snapshot(observation: PageObservation) -> list[dict]:
                 "value": _display_value(f),
                 "error": f.validation_message,
                 "credential": f.value_redacted,
+                "max_length": f.max_length,
                 "options": list(f.options) if f.options else None,
+                "option_labels": list(f.option_labels) if f.option_labels else None,
             }
         )
     return fields

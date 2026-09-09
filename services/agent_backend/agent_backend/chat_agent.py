@@ -58,8 +58,12 @@ Operations you may return:
 - {"op":"set_fact","key":<fact key>,"value":<final value>} — add or correct a
   value. COMPUTE the final value yourself: if the user asks to shorten an address
   to fit a length limit, produce a compliant version using standard abbreviations
-  (Road->Rd, Street->St, Apartment->Apt, etc.). Use a fact key that already exists
-  or clearly names a form field.
+  (Road->Rd, Street->St, Apartment->Apt, etc.). When the target field shows a
+  "(max N chars)" limit, your value MUST be at most N characters — respect the
+  field's real cap, not just what the user says. When a field lists "choices:",
+  the value MUST be exactly one of those choices (map a typo or synonym to the
+  right choice — "fmale"/"F" -> "Female"). Use a fact key that already exists or
+  clearly names a form field.
 - {"op":"refill"} — re-fill the form from the current facts (e.g. to fill fields
   that just appeared).
 - {"op":"explain","text":<answer>} — answer a question about the form's state
@@ -85,10 +89,16 @@ def build_user_prompt(
     for s in snapshot:
         bits = [s["label"], f'[{s["input_type"]}]']
         bits.append(f'= {s["value"]!r}' if s["value"] else "= (empty)")
+        if s.get("max_length"):
+            bits.append(f'(max {s["max_length"]} chars)')
         if s.get("error"):
             bits.append(f'ERROR: {s["error"]}')
-        if s.get("options"):
-            bits.append(f'({len(s["options"])} options)')
+        choices = s.get("option_labels") or s.get("options")
+        if choices:
+            if len(choices) <= 15:
+                bits.append("choices: " + ", ".join(map(str, choices)))
+            else:
+                bits.append(f"({len(choices)} choices)")
         form_lines.append("- " + " ".join(bits))
     fact_lines = [_fact_line(f) for f in facts]
     # Recent changes let "change it back to the previous value" resolve.

@@ -42,6 +42,9 @@ class FormField(StrictModel):
     options: list[str] | None = None  # option values (what the executor selects)
     option_labels: list[str] | None = None  # human labels, parallel to options
     validation_message: str | None = None
+    # HTML maxlength (chars) when the control enforces one — the reasoning layer
+    # needs the real cap to produce a value that won't be silently truncated.
+    max_length: int | None = None
     nearby_text: str | None = None
 
     @model_validator(mode="after")

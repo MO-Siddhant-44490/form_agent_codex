@@ -165,11 +165,31 @@ def _chat(st, session, loop, text, fact_items, send, history=None) -> None:
                     {u["key"] for u in updates},
                     mapper=st.mapper,
                 )
+                # Report the ACTUAL outcome, not the interpreter's optimistic
+                # reply: if a value didn't map/match, say so (with the choices).
+                questions = []
+                if edit.unresolved or edit.failed_fields:
+                    say = []
+                    for u in edit.unresolved:
+                        opts = f" Choices: {', '.join(u['options'])}." if u.get("options") else ""
+                        say.append(f"I couldn't set {u['field_label']} to {u['value']!r}.{opts}")
+                        questions.append(
+                            {
+                                "field_id": u["field_label"],
+                                "kind": "ambiguous_mapping",
+                                "prompt": f"Which value for {u['field_label']}?",
+                                "fact_keys": [u["key"]],
+                                "options": u.get("options"),
+                            }
+                        )
+                    for fid in edit.failed_fields:
+                        say.append(f"I couldn't fill {fid}.")
+                    payload["reply"] = " ".join(say) + " What should I use?"
                 payload.update(
                     {
                         "outcome": "EDITED",
                         "filled": edit.filled_fields,
-                        "questions": [],
+                        "questions": questions,
                         "validation_issues": [],
                         "state": _reperceive(st, transport, session.run_id),
                         "detail": None,

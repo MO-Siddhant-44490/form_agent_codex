@@ -115,6 +115,18 @@
           "default": null,
           "title": "Label"
         },
+        "max_length": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Max Length"
+        },
         "nearby_text": {
           "anyOf": [
             {

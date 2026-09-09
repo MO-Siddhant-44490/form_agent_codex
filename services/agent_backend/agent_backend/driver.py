@@ -198,6 +198,9 @@ def _prepare_reattempt(
 class EditResult:
     filled_fields: list[str] = field(default_factory=list)
     failed_fields: list[str] = field(default_factory=list)
+    # Changed facts whose value did not map to a field/option (e.g. a typo, or a
+    # value not among the choices): {key, value, field_label, options}.
+    unresolved: list[dict] = field(default_factory=list)
 
 
 def apply_edits(
@@ -222,44 +225,79 @@ def apply_edits(
 
     def fill(field_id, assignment) -> str:
         nonlocal observation, seq
-        fresh = next((f for f in observation.fields if f.field_id == field_id), None)
-        if fresh is None:
-            return "absent"
-        if assignment_satisfied(fresh, assignment.value, assignment.checked):
-            return "satisfied"
-        seq += 1
-        action = build_action_for(
-            fresh,
-            run_id=session.run_id,
-            tab_id=session.tab_id,
-            origin=session.origin,
-            value=assignment.value,
-            checked=assignment.checked,
-            sequence_number=seq,
-            source_observation_seq=observation.observation_seq,
-            value_ref=f"fact://{assignment.fact.fact_id}",
-        )
-        decision = check_action(action, observation, {field_id: assignment.value})
-        if decision.decision is PolicyDecisionKind.BLOCK:
-            return "blocked"
-        outcome = transport.execute(action)
-        observation = outcome.observation or transport.observe()
-        verified = (
-            outcome.verification is None
-            or outcome.verification.status is VerificationStatus.SUCCESS
-        )
-        return "ok" if outcome.result.status == "EXECUTED" and verified else "failed"
+        # Bounded retry: a single edit can fail transiently (value not yet
+        # settled, a widget mid-render). Re-attempt a couple of times with a
+        # fresh key before reporting failure — without the full-form loop.
+        for attempt in range(3):
+            fresh = next((f for f in observation.fields if f.field_id == field_id), None)
+            if fresh is None:
+                return "absent"
+            if assignment_satisfied(fresh, assignment.value, assignment.checked):
+                return "satisfied"
+            seq += 1
+            action = build_action_for(
+                fresh,
+                run_id=session.run_id,
+                tab_id=session.tab_id,
+                origin=session.origin,
+                value=assignment.value,
+                checked=assignment.checked,
+                sequence_number=seq,
+                source_observation_seq=observation.observation_seq,
+                value_ref=f"fact://{assignment.fact.fact_id}",
+                attempt=attempt,
+            )
+            decision = check_action(action, observation, {field_id: assignment.value})
+            if decision.decision is PolicyDecisionKind.BLOCK:
+                return "blocked"
+            outcome = transport.execute(action)
+            observation = outcome.observation or transport.observe()
+            verified = (
+                outcome.verification is None
+                or outcome.verification.status is VerificationStatus.SUCCESS
+            )
+            if outcome.result.status == "EXECUTED" and verified:
+                return "ok"
+            # The field may cap length (HTML maxlength or a JS limiter). If it
+            # accepted a prefix of our value, that value IS applied — accept it
+            # rather than failing on the length mismatch.
+            after = next((f for f in observation.fields if f.field_id == field_id), None)
+            cur = after.current_value if after else None
+            value = assignment.value or ""
+            if cur and value.startswith(cur) and 0 < len(cur) < len(value):
+                return "ok"
+        return "failed"
 
     # Pass 1: the explicitly-changed facts.
     mapping = mapper.map(observation, facts_by_key)
+    addressed: set[str] = set()
     for field_id, assignment in list(mapping.assignments.items()):
         if assignment.fact.key not in changed_keys or seq >= max_actions:
             continue
+        addressed.add(assignment.fact.key)
         status = fill(field_id, assignment)
         if status in ("ok", "satisfied"):
             result.filled_fields.append(field_id)
         elif status in ("failed", "blocked"):
             result.failed_fields.append(field_id)
+
+    # A changed fact with no assignment means its value did not map to a field
+    # or match an option — surface it honestly (with the choices, if any) rather
+    # than reporting a change that never happened.
+    def _label(fid: str) -> str:
+        fld = next((f for f in observation.fields if f.field_id == fid), None)
+        return (fld.label or fld.accessible_name or fid) if fld else fid
+
+    for key in changed_keys - addressed:
+        q = next((qq for qq in mapping.questions if key in (qq.fact_keys or [])), None)
+        result.unresolved.append(
+            {
+                "key": key,
+                "value": facts_by_key[key].value if key in facts_by_key else None,
+                "field_label": _label(q.field_id) if q and q.field_id else key,
+                "options": list(q.options) if q and q.options else None,
+            }
+        )
 
     # Pass 2: dependents the change revealed (e.g. state/district after country)
     # — required fields now mappable to a fact but not yet satisfied.

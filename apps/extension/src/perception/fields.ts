@@ -122,6 +122,10 @@ function baseField(el: Control, fieldId: string): FormField {
       ? Array.from(el.options).map((o) => o.textContent?.trim() ?? o.value)
       : null,
     validation_message: credential ? null : validationMessage(el),
+    max_length:
+      (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) && el.maxLength >= 0
+        ? el.maxLength
+        : null,
     nearby_text: groupLegend(el),
   };
 }
@@ -160,6 +164,7 @@ function radioGroupField(radios: HTMLInputElement[], name: string): FormField {
     options: radios.map((r) => r.value),
     option_labels: null,
     validation_message: null,
+    max_length: null,
     nearby_text: groupLegend(first),
   };
 }
@@ -264,6 +269,7 @@ function mergeComboboxes(doc: Document, fields: FormField[]): void {
         options,
         option_labels: optionLabels,
         validation_message: null,
+        max_length: null,
         nearby_text: groupLegend(el),
       });
     }
@@ -302,7 +308,7 @@ function mergeDatePickers(doc: Document, fields: FormField[]): void {
         required: el.getAttribute("aria-required") === "true",
         disabled: false, readonly: false, visible: true, checked: null,
         current_value: picker.currentValue, value_redacted: false, options: null, option_labels: null,
-        validation_message: null, nearby_text: groupLegend(el),
+        validation_message: null, max_length: null, nearby_text: groupLegend(el),
       });
     }
   }

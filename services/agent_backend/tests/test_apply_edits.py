@@ -31,6 +31,22 @@ def test_apply_edits_changes_only_the_targeted_field():
     assert transport.execution_counts == {"city": 1}  # only one action dispatched
 
 
+def test_apply_edits_reports_a_value_that_matches_no_option():
+    # A typo'd / invalid value for an option field is reported honestly (with the
+    # choices) rather than silently claiming success.
+    sex = FakeField("sex", "select-one", "gender", "Sex", options=["Male", "Female"], value="Male")
+    transport = FakeTransport(fields=[sex])
+
+    edit = apply_edits(transport, [_fact("gender", "Xyz")], {"gender"})
+
+    assert edit.filled_fields == []
+    assert transport.execution_counts == {}  # nothing dispatched
+    assert len(edit.unresolved) == 1
+    assert edit.unresolved[0]["key"] == "gender"
+    assert edit.unresolved[0]["value"] == "Xyz"
+    assert edit.unresolved[0]["options"] == ["Male", "Female"]
+
+
 def test_apply_edits_skips_a_field_already_at_the_target_value():
     city = FakeField("city", "text", "city", "City", value="Paris", required=True)
     transport = FakeTransport(fields=[city])
