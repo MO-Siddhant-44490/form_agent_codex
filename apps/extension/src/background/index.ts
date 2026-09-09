@@ -11,7 +11,6 @@ import {
   type PageObservation,
 } from "@form-agent/contracts";
 import { checkAction, type GuardRecords, type GuardSession } from "../guards/session-guards";
-import { parseIntent } from "./intent";
 import { verifyAction } from "../verification/verify";
 import type {
   ChatFact,
@@ -298,6 +297,26 @@ async function fillViaBackend(facts: ChatFact[], backendUrl: string): Promise<vo
       chrome.runtime.sendMessage({ type: "FA_FILL_DONE", result: env });
       return;
     }
+    if (env.type === "chat_result") {
+      // Keep our fact list in sync with what the interpreter applied.
+      if (chat) {
+        chat.busy = false;
+        for (const u of (env.applied as { key: string; value: string }[]) ?? []) {
+          upsertFact(u.key, u.value);
+        }
+      }
+      if (env.reply) agentMsg(String(env.reply));
+      chrome.runtime.sendMessage({ type: "FA_FILL_DONE", result: env });
+      return;
+    }
+    if (env.type === "chat_error") {
+      if (chat) chat.busy = false;
+      chrome.runtime.sendMessage({
+        type: "FA_FILL_DONE",
+        result: { type: "fill_error", error: String(env.error) },
+      });
+      return;
+    }
     const payload = env.payload ?? {};
     const reply: Record<string, unknown> = {
       protocol_version: env.protocol_version,
@@ -368,16 +387,16 @@ chrome.runtime.onMessage.addListener(
       return false;
     }
     if (message?.type === "FA_CHAT") {
-      const intent = parseIntent(message.text);
-      if (intent.kind === "refill") {
-        agentMsg("Re-filling this form…");
-        refill();
-      } else if (intent.kind === "set") {
-        upsertFact(intent.key, intent.value);
-        agentMsg(`Updated ${intent.key} = ${intent.value}. Re-filling…`);
-        refill();
+      // Reasoning happens on the backend (it has the model + the live form
+      // state). Forward the message with the current facts and let it plan.
+      if (!chat || chat.ws.readyState !== WebSocket.OPEN) {
+        agentMsg("No active session — click “Fill this form” to start.");
+      } else if (chat.busy) {
+        agentMsg("Still working on the last request — one moment.");
       } else {
-        agentMsg('I can update a value or re-fill. Try “set state to Karnataka”, “email: a@b.com”, or “refill”.');
+        chat.busy = true;
+        chat.ws.send(JSON.stringify({ type: "chat", text: message.text, facts: chat.facts }));
+        chrome.runtime.sendMessage({ type: "FA_FILL_STARTED" });
       }
       sendResponse(state);
       return false;

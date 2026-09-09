@@ -41,6 +41,12 @@ def _pick_option(fact: MappingFact, options: tuple[str, ...]) -> str | None:
 class FakeModelAdapter:
     model_id = "fake-mapper-v1"
 
+    # Tests may set a canned chat plan (raw JSON string) the interpreter parses.
+    chat_response: str = '{"reply": "ok", "ops": []}'
+
+    def chat_json(self, system: str, user: str) -> str:
+        return self.chat_response
+
     def map_fields(self, request: MappingRequest) -> GatewayResult:
         start = time.monotonic()
         fact_keys = {f.key: f for f in request.facts}

@@ -94,3 +94,23 @@ class BedrockModelAdapter:
             return text, usage.get("inputTokens"), usage.get("outputTokens")
 
         return run_derivation_chat(request, self._config.model_id, complete)
+
+    def chat_json(self, system: str, user: str) -> str:
+        """A single system+user turn returning the model's raw text (expected to
+        be JSON). Used by the reasoning chat interpreter; the caller parses and
+        re-validates the result — model output is never trusted directly."""
+        client = self._ensure_client()
+        try:
+            response = client.converse(
+                modelId=self._config.model_id,
+                system=[{"text": system}],
+                messages=[{"role": "user", "content": [{"text": user}]}],
+                inferenceConfig={
+                    "maxTokens": self._config.max_tokens,
+                    "temperature": self._config.temperature,
+                },
+            )
+        except Exception as error:
+            raise ModelUnavailable(f"bedrock converse failed: {error}") from error
+        content = response["output"]["message"]["content"]
+        return "".join(part.get("text", "") for part in content)

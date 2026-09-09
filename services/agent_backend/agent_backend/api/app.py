@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from fastapi import Depends, FastAPI, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from form_contracts import DocumentFact, FactStatus, FactValueType, Sensitivity, redacted_fact_repr
 
+from ..chat_agent import interpret_or_fallback
 from ..document_intelligence.fact_store import FactStore
 from ..document_intelligence.parser_factory import build_parser_from_env
 from ..document_intelligence.pipeline import DocumentPipeline
@@ -21,6 +22,9 @@ from ..snapshot import build_snapshot, summarize
 from .auth import AuthError, DevTokenAuth
 from .session_hub import ExtensionSession, ProtocolError
 from .transport_ws import WebSocketBrowserTransport
+
+# Non-sensitive geography keys; everything else defaults to personal.
+PUBLIC_KEYS = frozenset({"country", "state", "district", "locality", "pincode", "gender"})
 
 
 @dataclass
@@ -65,6 +69,59 @@ def _facts_from_payload(items: list[dict]) -> list[DocumentFact]:
     return facts
 
 
+def _fill_payload(result, state) -> dict:
+    """The common fill-result fields shared by a plain fill and a chat turn."""
+    return {
+        "outcome": result.outcome.value,
+        "filled": result.filled_fields,
+        "questions": [
+            {
+                "field_id": q.field_id,
+                "kind": q.kind.value,
+                "prompt": q.prompt,
+                # fact_keys lets the panel route an answer to the right fact;
+                # options let it render choices for a confirmation.
+                "fact_keys": list(q.fact_keys),
+                "options": list(q.options) if q.options else None,
+            }
+            for q in result.questions
+        ],
+        "validation_issues": [
+            {"field_id": i.field_id, "kind": i.kind.value, "label": i.label, "detail": i.detail}
+            for i in result.validation.issues
+        ],
+        "state": state,
+        "detail": result.detail,
+    }
+
+
+def _reperceive(st, transport, run_id):
+    """Snapshot the form as it now stands and summarize the delta since the last
+    turn. Best-effort; never fails the caller."""
+    try:
+        snapshot = build_snapshot(transport.observe())
+        state = summarize(snapshot, st.form_state.get(run_id))
+        st.form_state[run_id] = snapshot
+        return state
+    except Exception:
+        return None
+
+
+def _merge_facts(fact_items: list[dict], updates: list[dict]) -> list[dict]:
+    by_key = {f["key"]: dict(f) for f in fact_items if f.get("key")}
+    for u in updates:
+        k = u["key"]
+        if k in by_key:
+            by_key[k]["value"] = u["value"]
+        else:
+            by_key[k] = {
+                "key": k,
+                "value": u["value"],
+                "sensitivity": "public" if k in PUBLIC_KEYS else "personal",
+            }
+    return list(by_key.values())
+
+
 def _start_fill(st, session, loop, fact_items, send) -> None:
     """Drive a fill in the connected tab (in a worker thread, since run_fill is
     sync) and stream the result back to the panel. Never submits."""
@@ -74,47 +131,43 @@ def _start_fill(st, session, loop, fact_items, send) -> None:
         transport = WebSocketBrowserTransport(session, loop)
         try:
             result = run_fill(transport, facts, mapper=st.mapper, memory=st.memory)
-            # Re-perceive the form as it now stands and report the delta since
-            # the last turn (new cascade fields, errors) so the agent — and the
-            # user — are aware of the current state, not just what we acted on.
-            state = None
-            try:
-                snapshot = build_snapshot(transport.observe())
-                state = summarize(snapshot, st.form_state.get(session.run_id))
-                st.form_state[session.run_id] = snapshot
-            except Exception:  # perception is best-effort; never fail the fill on it
-                state = None
-            payload = {
-                "type": "fill_result",
-                "outcome": result.outcome.value,
-                "filled": result.filled_fields,
-                "questions": [
-                    {
-                        "field_id": q.field_id,
-                        "kind": q.kind.value,
-                        "prompt": q.prompt,
-                        # fact_keys lets the panel route an answer to the right
-                        # fact; options let it render choices for a confirmation.
-                        "fact_keys": list(q.fact_keys),
-                        "options": list(q.options) if q.options else None,
-                    }
-                    for q in result.questions
-                ],
-                "validation_issues": [
-                    {
-                        "field_id": i.field_id,
-                        "kind": i.kind.value,
-                        "label": i.label,
-                        "detail": i.detail,
-                    }
-                    for i in result.validation.issues
-                ],
-                "state": state,
-                "detail": result.detail,
-            }
+            state = _reperceive(st, transport, session.run_id)
+            payload = {"type": "fill_result", **_fill_payload(result, state)}
         except Exception as error:  # surface failures to the panel
             payload = {"type": "fill_error", "error": str(error)}
         st.repo.append_event(session.run_id, "fill_completed", {"outcome": payload.get("outcome")})
+        asyncio.run_coroutine_threadsafe(send(payload), loop)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
+def _chat(st, session, loop, text, fact_items, send) -> None:
+    """A reasoning chat turn: perceive the live form, interpret the user's
+    message into a plan (LLM, with a deterministic fallback), apply any fact
+    updates, re-fill through the gated pipeline, and report the new state.
+    Never submits; the plan can only set facts / refill / explain."""
+
+    def worker():
+        transport = WebSocketBrowserTransport(session, loop)
+        try:
+            snapshot = build_snapshot(transport.observe())
+            gateway = getattr(st.mapper, "_gateway", None)
+            plan = interpret_or_fallback(gateway, text, snapshot, fact_items)
+            updates = plan.fact_updates()
+            payload = {"type": "chat_result", "reply": plan.reply, "applied": updates}
+            if plan.wants_refill():
+                merged = _merge_facts(fact_items, updates)
+                result = run_fill(
+                    transport, _facts_from_payload(merged), mapper=st.mapper, memory=st.memory
+                )
+                payload.update(_fill_payload(result, _reperceive(st, transport, session.run_id)))
+            else:
+                # Explain-only: report the current state without acting.
+                payload["state"] = summarize(snapshot, st.form_state.get(session.run_id))
+                st.form_state[session.run_id] = snapshot
+        except Exception as error:
+            payload = {"type": "chat_error", "error": str(error)}
+        st.repo.append_event(session.run_id, "chat_turn", {"reply": payload.get("reply")})
         asyncio.run_coroutine_threadsafe(send(payload), loop)
 
     threading.Thread(target=worker, daemon=True).start()
@@ -242,6 +295,9 @@ def create_app(state: AppState | None = None) -> FastAPI:
                 raw = await websocket.receive_json()
                 if raw.get("type") == "start_fill":
                     _start_fill(st, session, loop, raw.get("facts", []), send)
+                    continue
+                if raw.get("type") == "chat":
+                    _chat(st, session, loop, raw.get("text", ""), raw.get("facts", []), send)
                     continue
                 try:
                     session.deliver(raw)
