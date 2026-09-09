@@ -10,6 +10,8 @@ const chatEl = document.getElementById("chat")!;
 const composer = document.getElementById("composer") as HTMLFormElement;
 const chatInput = document.getElementById("chatinput") as HTMLInputElement;
 const profile = document.getElementById("profile") as HTMLDetailsElement;
+const attach = document.getElementById("attach") as HTMLLabelElement;
+const fileInput = document.getElementById("file") as HTMLInputElement;
 
 const BACKEND = "http://127.0.0.1:8000";
 
@@ -65,7 +67,57 @@ let composerEnabled = false;
 function setComposerEnabled(on: boolean): void {
   composerEnabled = on;
   chatInput.disabled = !on;
+  attach.classList.toggle("disabled", !on);
 }
+
+// Merge extracted facts into the profile textarea (add missing keys, update
+// existing) so they persist and stay visible/editable.
+function mergeIntoProfile(facts: { key: string; value: string }[]): void {
+  const lines = factsEl.value.split("\n");
+  const index = new Map<string, number>();
+  lines.forEach((line, i) => {
+    const idx = line.indexOf(":");
+    if (idx !== -1) index.set(line.slice(0, idx).trim(), i);
+  });
+  for (const f of facts) {
+    const line = `${f.key}: ${f.value}`;
+    const at = index.get(f.key);
+    if (at !== undefined) lines[at] = line;
+    else lines.push(line);
+  }
+  factsEl.value = lines.filter((l) => l.trim()).join("\n");
+  try {
+    localStorage.setItem("fa_profile", factsEl.value);
+  } catch {
+    /* ignore */
+  }
+}
+
+attach.addEventListener("click", (e) => {
+  if (!composerEnabled) {
+    e.preventDefault();
+    bubble("Click “Fill this form” first, then attach a document to read from.", "sys");
+  }
+});
+
+fileInput.addEventListener("change", () => {
+  const file = fileInput.files?.[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    const dataUrl = String(reader.result);
+    const base64 = dataUrl.slice(dataUrl.indexOf(",") + 1);
+    bubble(`📎 ${file.name}`, "user");
+    void chrome.runtime.sendMessage({
+      type: "FA_PARSE_DOC",
+      filename: file.name,
+      mimeType: file.type || "application/octet-stream",
+      contentBase64: base64,
+    });
+  };
+  reader.readAsDataURL(file);
+  fileInput.value = ""; // allow re-selecting the same file
+});
 
 // Render a question the agent needs answered, with an inline answer input that
 // routes to the right fact. `fact_keys` (from the backend) or the field id give
@@ -178,6 +230,37 @@ chrome.runtime.onMessage.addListener((msg: Record<string, unknown>) => {
     }
   } else if (msg.type === "FA_AGENT_MSG") {
     bubble(String(msg.text), "agent");
+  } else if (msg.type === "FA_DOC_FACTS") {
+    const facts =
+      (msg.facts as { key: string; value: string; needs_review?: boolean }[]) ?? [];
+    if (facts.length === 0) {
+      bubble(`I couldn't read any details from ${String(msg.filename)}.`, "agent");
+    } else {
+      mergeIntoProfile(facts);
+      const card = document.createElement("div");
+      card.className = "card";
+      const title = document.createElement("b");
+      title.textContent = `Read ${facts.length} detail(s) from ${String(msg.filename)}`;
+      card.appendChild(title);
+      for (const f of facts) {
+        const row = document.createElement("div");
+        row.className = "kv" + (f.needs_review ? " review" : "");
+        const k = document.createElement("span");
+        k.className = "k";
+        k.textContent = f.key;
+        const v = document.createElement("span");
+        v.className = "v";
+        v.textContent = f.value + (f.needs_review ? "  (check)" : "");
+        row.appendChild(k);
+        row.appendChild(v);
+        card.appendChild(row);
+      }
+      chatEl.appendChild(card);
+      chatEl.scrollTop = chatEl.scrollHeight;
+      bubble("Added these to your profile. Say “fill” to use them, or correct any value.", "agent");
+    }
+  } else if (msg.type === "FA_DOC_ERROR") {
+    bubble(`Couldn't read the document: ${String(msg.error)}`, "agent");
   } else if (msg.type === "FA_FILL_DONE") {
     fillBtn.disabled = false;
     const result = msg.result as Record<string, unknown>;

@@ -3,6 +3,7 @@ authenticated extension WebSocket. Wiring only — orchestration, mapping, and
 policy live in their own modules."""
 
 import asyncio
+import base64
 import threading
 from dataclasses import dataclass, field
 
@@ -136,6 +137,57 @@ def _start_fill(st, session, loop, fact_items, send) -> None:
         except Exception as error:  # surface failures to the panel
             payload = {"type": "fill_error", "error": str(error)}
         st.repo.append_event(session.run_id, "fill_completed", {"outcome": payload.get("outcome")})
+        asyncio.run_coroutine_threadsafe(send(payload), loop)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
+def _parse_document(st, session, loop, filename, mime, content_b64, send) -> None:
+    """Parse an uploaded document (Textract + Bedrock) into reviewable facts and
+    stream them to the panel. Reuses the same pipeline as the REST endpoint; runs
+    in a worker thread since extraction is slow. Values are the user's own data
+    on their own machine — sent verbatim so they can review them."""
+
+    def worker():
+        try:
+            data = base64.b64decode(content_b64 or "")
+            pipeline = DocumentPipeline(
+                store=st.documents, parser=build_parser_from_env(), facts=st.facts
+            )
+            record, report, _model_calls = pipeline.ingest(
+                data, filename or "upload", mime or "application/octet-stream"
+            )
+            st.repo.record_document(
+                record.document_id,
+                session.run_id,
+                record.filename,
+                record.mime_type,
+                record.size_bytes,
+                record.sha256,
+                storage_key=f"docs/{record.document_id}",
+            )
+            review_keys = set(st.facts.needing_review().keys())
+            facts = [
+                {
+                    "key": f.key,
+                    "value": f.value,
+                    "value_type": f.value_type.value,
+                    "sensitivity": f.sensitivity.value,
+                    "confidence": f.confidence,
+                    "needs_review": f.key in review_keys,
+                }
+                for f in report.facts
+            ]
+            payload = {
+                "type": "document_facts",
+                "filename": record.filename,
+                "facts": facts,
+                "skipped_pages": [q.page for q in report.skipped_pages],
+            }
+        except DocumentRejected as error:
+            payload = {"type": "document_error", "error": str(error)}
+        except Exception as error:
+            payload = {"type": "document_error", "error": f"could not read the document: {error}"}
         asyncio.run_coroutine_threadsafe(send(payload), loop)
 
     threading.Thread(target=worker, daemon=True).start()
@@ -344,6 +396,17 @@ def create_app(state: AppState | None = None) -> FastAPI:
                         raw.get("facts", []),
                         send,
                         raw.get("history", []),
+                    )
+                    continue
+                if raw.get("type") == "parse_document":
+                    _parse_document(
+                        st,
+                        session,
+                        loop,
+                        raw.get("filename"),
+                        raw.get("mime_type"),
+                        raw.get("content_base64"),
+                        send,
                     )
                     continue
                 try:

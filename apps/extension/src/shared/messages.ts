@@ -36,7 +36,9 @@ export type PanelCommand =
   // "refill"). Handled in the background against the open session.
   | { type: "FA_CHAT"; text: string }
   // A direct answer to a question: upsert this fact and re-fill.
-  | { type: "FA_ANSWER"; key: string; value: string };
+  | { type: "FA_ANSWER"; key: string; value: string }
+  // Upload a document (base64) to parse into facts (resume, ID, etc.).
+  | { type: "FA_PARSE_DOC"; filename: string; mimeType: string; contentBase64: string };
 
 export type SessionState = {
   attached: boolean;

@@ -289,6 +289,18 @@ function makeOnMessage(runId: string): (event: MessageEvent) => Promise<void> {
       });
       return;
     }
+    if (env.type === "document_facts") {
+      // Merge extracted facts into our fact set so the next fill uses them,
+      // and show them to the user for review.
+      const facts = (env.facts as { key: string; value: string }[]) ?? [];
+      for (const f of facts) upsertFact(f.key, f.value);
+      chrome.runtime.sendMessage({ type: "FA_DOC_FACTS", filename: env.filename, facts });
+      return;
+    }
+    if (env.type === "document_error") {
+      chrome.runtime.sendMessage({ type: "FA_DOC_ERROR", error: String(env.error) });
+      return;
+    }
     const payload = env.payload ?? {};
     const reply: Record<string, unknown> = {
       protocol_version: env.protocol_version,
@@ -498,6 +510,25 @@ chrome.runtime.onMessage.addListener(
         upsertFact(message.key, message.value);
         agentMsg(`Got it — ${message.key} = ${message.value}. Re-filling…`);
         await refill();
+      })();
+      sendResponse(state);
+      return false;
+    }
+    if (message?.type === "FA_PARSE_DOC") {
+      void (async () => {
+        if (!(await ensureConnection()) || !chat) {
+          agentMsg("Click “Fill this form” first, then attach a document to read from.");
+          return;
+        }
+        agentMsg(`Reading ${message.filename}…`);
+        chat.ws.send(
+          JSON.stringify({
+            type: "parse_document",
+            filename: message.filename,
+            mime_type: message.mimeType,
+            content_base64: message.contentBase64,
+          }),
+        );
       })();
       sendResponse(state);
       return false;
