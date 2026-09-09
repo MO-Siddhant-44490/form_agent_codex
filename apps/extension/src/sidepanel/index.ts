@@ -214,7 +214,33 @@ chrome.runtime.onMessage.addListener((msg: Record<string, unknown>) => {
       bubble(`Finished: ${outcome}. ${String(result.detail ?? "")}`, "agent");
     }
 
-    for (const q of questions) renderQuestion(q);
+    // Situational report from the live form-state snapshot.
+    const state = result.state as {
+      text?: string;
+      empty_required?: { field_id: string; label: string; credential?: boolean; options?: string[] | null }[];
+    } | null;
+    if (state?.text) bubble(`Form status — ${state.text}`, "agent");
+
+    const asked = new Set(questions.map((q) => q.field_id));
+    for (const q of questions) {
+      renderQuestion(q);
+    }
+    // Empty required fields the fill did not already ask about (e.g. cascade-
+    // revealed State/District) get an inline prompt so nothing is silently left.
+    for (const f of state?.empty_required ?? []) {
+      if (asked.has(f.field_id)) continue;
+      if (f.credential) {
+        bubble(`“${f.label}” has to be completed on the page itself (e.g. CAPTCHA).`, "sys");
+        continue;
+      }
+      renderQuestion({
+        field_id: f.field_id,
+        kind: "empty_required",
+        prompt: `“${f.label}” is empty — what should I put there?`,
+        fact_keys: [],
+        options: f.options ?? null,
+      });
+    }
     for (const iss of issues) {
       const div = document.createElement("div");
       div.className = "q err";

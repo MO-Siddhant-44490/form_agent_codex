@@ -17,6 +17,7 @@ from ..driver import run_fill
 from ..mapper import DeterministicMapper, Mapper
 from ..memory import MappingMemory
 from ..persistence.repository import Repository, make_engine
+from ..snapshot import build_snapshot, summarize
 from .auth import AuthError, DevTokenAuth
 from .session_hub import ExtensionSession, ProtocolError
 from .transport_ws import WebSocketBrowserTransport
@@ -36,6 +37,9 @@ class AppState:
     # verified field->fact mappings here and the mapper recalls them.
     memory: "MappingMemory | None" = None
     sessions: dict[str, ExtensionSession] = field(default_factory=dict)
+    # Last form-state snapshot per run, so the chat layer can report what
+    # changed since the previous turn (new cascade fields, new errors).
+    form_state: dict[str, list] = field(default_factory=dict)
 
 
 def _facts_from_payload(items: list[dict]) -> list[DocumentFact]:
@@ -70,6 +74,16 @@ def _start_fill(st, session, loop, fact_items, send) -> None:
         transport = WebSocketBrowserTransport(session, loop)
         try:
             result = run_fill(transport, facts, mapper=st.mapper, memory=st.memory)
+            # Re-perceive the form as it now stands and report the delta since
+            # the last turn (new cascade fields, errors) so the agent — and the
+            # user — are aware of the current state, not just what we acted on.
+            state = None
+            try:
+                snapshot = build_snapshot(transport.observe())
+                state = summarize(snapshot, st.form_state.get(session.run_id))
+                st.form_state[session.run_id] = snapshot
+            except Exception:  # perception is best-effort; never fail the fill on it
+                state = None
             payload = {
                 "type": "fill_result",
                 "outcome": result.outcome.value,
@@ -95,6 +109,7 @@ def _start_fill(st, session, loop, fact_items, send) -> None:
                     }
                     for i in result.validation.issues
                 ],
+                "state": state,
                 "detail": result.detail,
             }
         except Exception as error:  # surface failures to the panel
