@@ -14,7 +14,7 @@ from ..document_intelligence.fact_store import FactStore
 from ..document_intelligence.parser_factory import build_parser_from_env
 from ..document_intelligence.pipeline import DocumentPipeline
 from ..document_intelligence.store import DocumentRejected, DocumentStore
-from ..driver import run_fill
+from ..driver import apply_edits, run_fill
 from ..mapper import DeterministicMapper, Mapper
 from ..memory import MappingMemory
 from ..persistence.repository import Repository, make_engine
@@ -141,7 +141,7 @@ def _start_fill(st, session, loop, fact_items, send) -> None:
     threading.Thread(target=worker, daemon=True).start()
 
 
-def _chat(st, session, loop, text, fact_items, send) -> None:
+def _chat(st, session, loop, text, fact_items, send, history=None) -> None:
     """A reasoning chat turn: perceive the live form, interpret the user's
     message into a plan (LLM, with a deterministic fallback), apply any fact
     updates, re-fill through the gated pipeline, and report the new state.
@@ -152,13 +152,32 @@ def _chat(st, session, loop, text, fact_items, send) -> None:
         try:
             snapshot = build_snapshot(transport.observe())
             gateway = getattr(st.mapper, "_gateway", None)
-            plan = interpret_or_fallback(gateway, text, snapshot, fact_items)
+            plan = interpret_or_fallback(gateway, text, snapshot, fact_items, history or [])
             updates = plan.fact_updates()
             payload = {"type": "chat_result", "reply": plan.reply, "applied": updates}
-            if plan.wants_refill():
+            if updates:
+                # Targeted edit: change only the affected field(s), not the whole
+                # form — avoids the step-budget churn of a full re-fill.
                 merged = _merge_facts(fact_items, updates)
+                edit = apply_edits(
+                    transport,
+                    _facts_from_payload(merged),
+                    {u["key"] for u in updates},
+                    mapper=st.mapper,
+                )
+                payload.update(
+                    {
+                        "outcome": "EDITED",
+                        "filled": edit.filled_fields,
+                        "questions": [],
+                        "validation_issues": [],
+                        "state": _reperceive(st, transport, session.run_id),
+                        "detail": None,
+                    }
+                )
+            elif any(o.op == "refill" for o in plan.ops):
                 result = run_fill(
-                    transport, _facts_from_payload(merged), mapper=st.mapper, memory=st.memory
+                    transport, _facts_from_payload(fact_items), mapper=st.mapper, memory=st.memory
                 )
                 payload.update(_fill_payload(result, _reperceive(st, transport, session.run_id)))
             else:
@@ -297,7 +316,15 @@ def create_app(state: AppState | None = None) -> FastAPI:
                     _start_fill(st, session, loop, raw.get("facts", []), send)
                     continue
                 if raw.get("type") == "chat":
-                    _chat(st, session, loop, raw.get("text", ""), raw.get("facts", []), send)
+                    _chat(
+                        st,
+                        session,
+                        loop,
+                        raw.get("text", ""),
+                        raw.get("facts", []),
+                        send,
+                        raw.get("history", []),
+                    )
                     continue
                 try:
                     session.deliver(raw)

@@ -210,6 +210,11 @@ type ChatSession = {
 };
 let chat: ChatSession | null = null;
 
+// A short trail of recent value changes so the agent can honor "change it back
+// to the previous value". Sent to the interpreter with each chat turn.
+type ValueChange = { key: string; from: string | null; to: string };
+let recentChanges: ValueChange[] = [];
+
 type SavedSession = {
   runId: string;
   token: string;
@@ -217,6 +222,7 @@ type SavedSession = {
   tabId: number | null;
   origin: string | null;
   facts: ChatFact[];
+  history: ValueChange[];
 };
 
 function agentMsg(text: string): void {
@@ -232,8 +238,17 @@ function saveSession(): void {
     tabId: state.tabId,
     origin: state.origin,
     facts: chat.facts,
+    history: recentChanges,
   };
   void chrome.storage.session.set({ fa_session: saved }).catch(() => {});
+}
+
+// Record a value change (capturing the prior value) before applying it.
+function recordChange(key: string, value: string): void {
+  const old = chat?.facts.find((f) => f.key === key)?.value ?? null;
+  if (old === value) return;
+  recentChanges.push({ key, from: old, to: value });
+  if (recentChanges.length > 8) recentChanges = recentChanges.slice(-8);
 }
 
 function upsertFact(key: string, value: string): void {
@@ -258,6 +273,7 @@ function makeOnMessage(runId: string): (event: MessageEvent) => Promise<void> {
       if (chat) {
         chat.busy = false;
         for (const u of (env.applied as { key: string; value: string }[]) ?? []) {
+          recordChange(u.key, u.value); // capture prior value before applying
           upsertFact(u.key, u.value);
         }
       }
@@ -355,6 +371,7 @@ async function ensureConnection(): Promise<boolean> {
   state.tabId = saved.tabId;
   state.origin = saved.origin;
   state.error = null;
+  recentChanges = saved.history ?? [];
   try {
     await chrome.scripting.executeScript({ target: { tabId: saved.tabId }, files: ["content.js"] });
   } catch {
@@ -395,6 +412,7 @@ async function fillViaBackend(facts: ChatFact[], backendUrl: string): Promise<vo
     }
     chat = null;
   }
+  recentChanges = [];
   try {
     await chrome.storage.session.remove("fa_session");
   } catch {
@@ -472,6 +490,7 @@ chrome.runtime.onMessage.addListener(
           agentMsg("No active session — click “Fill this form” to start.");
           return;
         }
+        recordChange(message.key, message.value);
         upsertFact(message.key, message.value);
         agentMsg(`Got it — ${message.key} = ${message.value}. Re-filling…`);
         await refill();
@@ -492,7 +511,14 @@ chrome.runtime.onMessage.addListener(
           return;
         }
         chat.busy = true;
-        chat.ws.send(JSON.stringify({ type: "chat", text: message.text, facts: chat.facts }));
+        chat.ws.send(
+          JSON.stringify({
+            type: "chat",
+            text: message.text,
+            facts: chat.facts,
+            history: recentChanges,
+          }),
+        );
         chrome.runtime.sendMessage({ type: "FA_FILL_STARTED" });
       })();
       sendResponse(state);

@@ -194,6 +194,90 @@ def _prepare_reattempt(
                 value_overrides[field_id] = reshaped
 
 
+@dataclass
+class EditResult:
+    filled_fields: list[str] = field(default_factory=list)
+    failed_fields: list[str] = field(default_factory=list)
+
+
+def apply_edits(
+    transport: BrowserTransport,
+    facts: list[DocumentFact],
+    changed_keys: set[str],
+    mapper: Mapper | None = None,
+    max_actions: int = 12,
+) -> EditResult:
+    """Targeted edit: change only the field(s) bound to `changed_keys` (plus any
+    required dependent revealed by the change), instead of re-running the whole
+    form. Avoids the churn and step-budget exhaustion of a full re-fill for a
+    one-field correction. Every action still passes the policy gate and is
+    independently verified; never submits."""
+    mapper = mapper or DeterministicMapper()
+    facts_by_key = {f.key: f for f in facts}
+    result = EditResult()
+
+    session = transport.attach()
+    observation = transport.observe()
+    seq = 0
+
+    def fill(field_id, assignment) -> str:
+        nonlocal observation, seq
+        fresh = next((f for f in observation.fields if f.field_id == field_id), None)
+        if fresh is None:
+            return "absent"
+        if assignment_satisfied(fresh, assignment.value, assignment.checked):
+            return "satisfied"
+        seq += 1
+        action = build_action_for(
+            fresh,
+            run_id=session.run_id,
+            tab_id=session.tab_id,
+            origin=session.origin,
+            value=assignment.value,
+            checked=assignment.checked,
+            sequence_number=seq,
+            source_observation_seq=observation.observation_seq,
+            value_ref=f"fact://{assignment.fact.fact_id}",
+        )
+        decision = check_action(action, observation, {field_id: assignment.value})
+        if decision.decision is PolicyDecisionKind.BLOCK:
+            return "blocked"
+        outcome = transport.execute(action)
+        observation = outcome.observation or transport.observe()
+        verified = (
+            outcome.verification is None
+            or outcome.verification.status is VerificationStatus.SUCCESS
+        )
+        return "ok" if outcome.result.status == "EXECUTED" and verified else "failed"
+
+    # Pass 1: the explicitly-changed facts.
+    mapping = mapper.map(observation, facts_by_key)
+    for field_id, assignment in list(mapping.assignments.items()):
+        if assignment.fact.key not in changed_keys or seq >= max_actions:
+            continue
+        status = fill(field_id, assignment)
+        if status in ("ok", "satisfied"):
+            result.filled_fields.append(field_id)
+        elif status in ("failed", "blocked"):
+            result.failed_fields.append(field_id)
+
+    # Pass 2: dependents the change revealed (e.g. state/district after country)
+    # — required fields now mappable to a fact but not yet satisfied.
+    mapping = mapper.map(observation, facts_by_key)
+    for field_id, assignment in list(mapping.assignments.items()):
+        if field_id in result.filled_fields or seq >= max_actions:
+            continue
+        fresh = next((f for f in observation.fields if f.field_id == field_id), None)
+        if fresh is None or not fresh.required:
+            continue
+        if assignment_satisfied(fresh, assignment.value, assignment.checked):
+            continue
+        if fill(field_id, assignment) == "ok":
+            result.filled_fields.append(field_id)
+
+    return result
+
+
 def run_fill(
     transport: BrowserTransport,
     facts: list[DocumentFact],

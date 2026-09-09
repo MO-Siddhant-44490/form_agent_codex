@@ -186,7 +186,10 @@ chrome.runtime.onMessage.addListener((msg: Record<string, unknown>) => {
       bubble(`Something went wrong: ${String(result.error)}`, "agent");
       return;
     }
-    const outcome = String(result.outcome);
+    // A chat turn carries a `reply` (already shown as an agent message) — don't
+    // duplicate it with an outcome line. Only a full fill gets the outcome banner.
+    const isChat = result.reply !== undefined || result.applied !== undefined;
+    const outcome = result.outcome ? String(result.outcome) : "";
     const filled = (result.filled as string[]) ?? [];
     const questions =
       (result.questions as {
@@ -199,19 +202,23 @@ chrome.runtime.onMessage.addListener((msg: Record<string, unknown>) => {
     const issues =
       (result.validation_issues as { field_id: string; label?: string; detail: string }[]) ?? [];
 
-    if (outcome === "COMPLETED") {
-      setStatus(`Done — ${filled.length} fields filled. Nothing submitted.`, "ok");
-      bubble(`Filled ${filled.length} field(s). Everything checks out — review and submit yourself.`, "agent");
-    } else if (outcome === "NEEDS_USER") {
-      const need = questions.length + issues.length;
-      setStatus(`Filled ${filled.length}. ${need} item(s) need you. Nothing submitted.`, "warn");
-      bubble(
-        `Filled ${filled.length} field(s). ${need} item(s) need your input — answer below, or just tell me the value.`,
-        "agent",
-      );
+    if (!isChat) {
+      if (outcome === "COMPLETED") {
+        setStatus(`Done — ${filled.length} fields filled. Nothing submitted.`, "ok");
+        bubble(`Filled ${filled.length} field(s). Everything checks out — review and submit yourself.`, "agent");
+      } else if (outcome === "NEEDS_USER") {
+        const need = questions.length + issues.length;
+        setStatus(`Filled ${filled.length}. ${need} item(s) need you. Nothing submitted.`, "warn");
+        bubble(
+          `Filled ${filled.length} field(s). ${need} item(s) need your input — answer below, or just tell me the value.`,
+          "agent",
+        );
+      } else if (outcome) {
+        setStatus(`Finished: ${outcome}. ${String(result.detail ?? "")}`, "warn");
+        bubble(`Finished: ${outcome}. ${String(result.detail ?? "")}`, "agent");
+      }
     } else {
-      setStatus(`Finished: ${outcome}. ${String(result.detail ?? "")}`, "warn");
-      bubble(`Finished: ${outcome}. ${String(result.detail ?? "")}`, "agent");
+      setStatus("Updated.", "");
     }
 
     // Situational report from the live form-state snapshot.

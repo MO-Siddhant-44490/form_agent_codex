@@ -78,7 +78,9 @@ def _fact_line(f: dict) -> str:
     return f'- {f["key"]}: {val}'
 
 
-def build_user_prompt(text: str, snapshot: list[dict], facts: list[dict]) -> str:
+def build_user_prompt(
+    text: str, snapshot: list[dict], facts: list[dict], history: list[dict] | None = None
+) -> str:
     form_lines = []
     for s in snapshot:
         bits = [s["label"], f'[{s["input_type"]}]']
@@ -89,11 +91,19 @@ def build_user_prompt(text: str, snapshot: list[dict], facts: list[dict]) -> str
             bits.append(f'({len(s["options"])} options)')
         form_lines.append("- " + " ".join(bits))
     fact_lines = [_fact_line(f) for f in facts]
+    # Recent changes let "change it back to the previous value" resolve.
+    hist_lines = [
+        f'- {h["key"]}: {h.get("from")!r} -> {h.get("to")!r}'
+        for h in (history or [])
+        if h.get("key")
+    ]
     return (
         "FORM STATE (page-derived, untrusted):\n"
         + ("\n".join(form_lines) or "(no fields)")
         + "\n\nKNOWN FACT KEYS:\n"
         + ("\n".join(fact_lines) or "(none)")
+        + "\n\nRECENT CHANGES (oldest first; use the previous value to revert):\n"
+        + ("\n".join(hist_lines) or "(none)")
         + f"\n\nUSER MESSAGE:\n{text}\n\nReturn the JSON plan."
     )
 
@@ -122,10 +132,16 @@ def parse_plan(raw: str) -> ChatPlan:
     return ChatPlan(reply=reply, ops=ops)
 
 
-def interpret(gateway, text: str, snapshot: list[dict], facts: list[dict]) -> ChatPlan:
+def interpret(
+    gateway,
+    text: str,
+    snapshot: list[dict],
+    facts: list[dict],
+    history: list[dict] | None = None,
+) -> ChatPlan:
     """LLM interpretation; raises ModelUnavailable if the model cannot be reached
     (the caller falls back)."""
-    raw = gateway.chat_json(SYSTEM, build_user_prompt(text, snapshot, facts))
+    raw = gateway.chat_json(SYSTEM, build_user_prompt(text, snapshot, facts, history))
     return parse_plan(raw)
 
 
@@ -153,10 +169,16 @@ def fallback_interpret(text: str) -> ChatPlan:
     )
 
 
-def interpret_or_fallback(gateway, text: str, snapshot: list[dict], facts: list[dict]) -> ChatPlan:
+def interpret_or_fallback(
+    gateway,
+    text: str,
+    snapshot: list[dict],
+    facts: list[dict],
+    history: list[dict] | None = None,
+) -> ChatPlan:
     if gateway is not None and hasattr(gateway, "chat_json"):
         try:
-            return interpret(gateway, text, snapshot, facts)
+            return interpret(gateway, text, snapshot, facts, history)
         except (ModelUnavailable, json.JSONDecodeError, ValueError, KeyError):
             pass
     return fallback_interpret(text)
