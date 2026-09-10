@@ -1,6 +1,6 @@
 # Form Agent — Work Summary
 
-_Last updated: 2026-09-10. Branch `main`; 7 commits ahead of `origin/main` (not yet pushed)._
+_Last updated: 2026-09-10. Branch `main`; 8 commits ahead of `origin/main` (not yet pushed)._
 
 An agentic Chrome extension + local backend that fills web forms from a user
 profile built out of their documents, driven by a chat interface. It never
@@ -31,6 +31,8 @@ submits a form — the human always reviews first.
 ---
 
 ## 2. Architecture
+
+_Full diagrams and the step-by-step form-filling journey mapped to components: **[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)**._
 
 Deliberately **not** a monolithic LLM agent driving the browser. It is a
 **deterministic skeleton with the LLM injected at bounded, verified points**.
