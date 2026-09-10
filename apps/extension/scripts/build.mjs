@@ -1,11 +1,18 @@
 // Bundles the extension into dist/ with esbuild.
+//
+//   node scripts/build.mjs          # committed manifest (localhost only)
+//   node scripts/build.mjs --dev    # dist/manifest.json widened to <all_urls>
+//                                   # for trying the extension on any site
+//
+// --dev only ever rewrites the copy in dist/; the source manifest is untouched.
 import { build } from "esbuild";
-import { cp, mkdir, rm } from "node:fs/promises";
+import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const dist = join(root, "dist");
+const dev = process.argv.includes("--dev");
 
 await rm(dist, { recursive: true, force: true });
 await mkdir(dist, { recursive: true });
@@ -20,4 +27,11 @@ await Promise.all([
 
 await cp(join(root, "manifest.json"), join(dist, "manifest.json"));
 await cp(join(root, "src/sidepanel/sidepanel.html"), join(dist, "sidepanel.html"));
-console.log("extension built into dist/");
+
+if (dev) {
+  const manifestPath = join(dist, "manifest.json");
+  const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
+  manifest.host_permissions = ["<all_urls>"];
+  await writeFile(manifestPath, JSON.stringify(manifest, null, 2) + "\n");
+}
+console.log(`extension built into dist/${dev ? " (dev: host_permissions <all_urls>)" : ""}`);

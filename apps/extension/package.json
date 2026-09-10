@@ -6,6 +6,7 @@
   "description": "Chrome MV3 extension: current-tab perception (Slice 1 is observe-only).",
   "scripts": {
     "build": "node scripts/build.mjs",
+    "build:dev": "node scripts/build.mjs --dev",
     "test": "vitest run",
     "test:e2e": "node scripts/build.mjs && playwright test",
     "typecheck": "tsc --noEmit"

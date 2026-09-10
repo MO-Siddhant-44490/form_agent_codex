@@ -168,10 +168,9 @@ export BEDROCK_MODEL_ID=apac.anthropic.claude-3-7-sonnet-20250219-v1:0
 uv run --package agent-backend --extra server python -m agent_backend.api.server
 # → serves http://127.0.0.1:8000 ; prints "model provider: ModelAssistedMapper (...)"
 
-# 3. Extension (build with host access for any site; committed manifest is localhost-only)
-python3 -c "import json;p='apps/extension/manifest.json';m=json.load(open(p));m['host_permissions']=['<all_urls>'];json.dump(m,open(p,'w'),indent=2)"
-pnpm --filter @form-agent/extension build
-git checkout apps/extension/manifest.json
+# 3. Extension — `build:dev` widens dist/manifest.json to <all_urls> so you can
+#    try it on any site (the committed manifest stays localhost-only)
+pnpm --filter @form-agent/extension build:dev
 # chrome://extensions → Developer mode → Load unpacked → apps/extension/dist (↻ reload after rebuilds)
 ```
 
