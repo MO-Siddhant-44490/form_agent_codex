@@ -19,10 +19,16 @@ Rules:
 - A field's `autocomplete` token (W3C standard, e.g. email/tel/given-name/
   street-address/postal-code) is the strongest signal when present; prefer it
   over the scraped label. `placeholder` is often the only visible label.
-- Map a field only when a fact key clearly corresponds to it.
+- Map a field with confidence >= 0.7 only when a fact key clearly corresponds
+  to it.
 - For fields with an options list, set selected_option_value to the single
   best option value for the fact, or leave it null.
-- If unsure, set fact_key to null and needs_clarification to true.
+- If a fact key PLAUSIBLY corresponds but you are not certain — an abbreviation,
+  acronym or synonym of the field ("aID"/"uid" for "Aadhaar Number", "dob" for
+  "Date of Birth", "mob" for "Mobile") — still return that fact_key, with
+  needs_clarification true and confidence below 0.7. The user will be asked
+  "use it?" rather than the field being silently left empty.
+- Set fact_key to null only when no known fact could reasonably fit.
 - Never map password, OTP, or CAPTCHA-related fields.
 - Respond with ONLY a JSON object: {"mappings": [{"field_id": str,
   "fact_key": str|null, "selected_option_value": str|null,

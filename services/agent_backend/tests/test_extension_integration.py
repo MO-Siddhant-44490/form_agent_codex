@@ -267,7 +267,8 @@ def test_combobox_fill_via_extension(fixture_server):
         assert len(result.filled_fields) == 2
 
         values = transport.page_eval(
-            "() => Object.fromEntries(new FormData(document.getElementById('application-form')).entries())"
+            "() => Object.fromEntries("
+            "new FormData(document.getElementById('application-form')).entries())"
         )
         assert values["full_name"] == "Ada Lovelace"
         assert values["country"] == "IN"  # the hidden input the combobox sets
@@ -354,7 +355,8 @@ def test_datepicker_fill_via_extension(fixture_server):
         assert len(result.filled_fields) == 2
 
         values = transport.page_eval(
-            "() => Object.fromEntries(new FormData(document.getElementById('application-form')).entries())"
+            "() => Object.fromEntries("
+            "new FormData(document.getElementById('application-form')).entries())"
         )
         assert values["full_name"] == "Ada Lovelace"
         assert values["date_of_birth"] == "1998-04-17"  # picked from the calendar
@@ -379,7 +381,8 @@ def test_shadow_mode_proposes_without_touching_the_page(fixture_server):
 
         # The served form started empty and proposing changed nothing.
         values_after = transport.page_eval(
-            "() => Object.fromEntries(new FormData(document.getElementById('application-form')).entries())"
+            "() => Object.fromEntries("
+            "new FormData(document.getElementById('application-form')).entries())"
         )
         assert all(v == "" for v in values_after.values())  # untouched
         assert transport.page_eval("() => window.__fixture.submissions.length") == 0

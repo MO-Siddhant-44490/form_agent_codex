@@ -1,5 +1,5 @@
-"""Profile merge (profile.merge_document): new fields added, identical values deduped, differing values
-surfaced as conflicts (never silently overwritten)."""
+"""Profile merge (profile.merge_document): new fields added, identical values
+deduped, differing values surfaced as conflicts (never silently overwritten)."""
 
 from types import SimpleNamespace
 

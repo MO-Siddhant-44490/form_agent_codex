@@ -37,6 +37,12 @@ export type PanelCommand =
   | { type: "FA_CHAT"; text: string }
   // A direct answer to a question: upsert this fact and re-fill.
   | { type: "FA_ANSWER"; key: string; value: string }
+  // The user confirmed "use fact <key> for field <fieldId>" (an abbreviation
+  // or synonym the agent proposed): fill that field from the existing fact.
+  | { type: "FA_BIND"; fieldId: string; key: string }
+  // A one-off value for a page-specific field with no profile fact (a consent
+  // tick, a form-only required box). Applied to that field, not stored.
+  | { type: "FA_SET_FIELD"; fieldId: string; value: string }
   // Upload a document (base64) to parse and MERGE into the profile. `facts` is
   // the profile to merge against (empty to start a new profile).
   | {

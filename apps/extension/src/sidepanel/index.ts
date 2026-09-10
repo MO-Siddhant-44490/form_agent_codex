@@ -40,10 +40,6 @@ function send(message: Record<string, unknown>): void {
   void chrome.runtime.sendMessage(message);
 }
 
-function slug(s: string): string {
-  return s.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
-}
-
 /** Answer a question: echo it and hand the fact to the agent, which re-fills. */
 function answer(key: string, value: string): void {
   chat.bubble(`${key}: ${value}`, "user");
@@ -58,16 +54,99 @@ type Question = {
   prompt: string;
   fact_keys?: string[];
   options?: string[] | null;
+  label?: string;
 };
+
+// Question kinds where the agent has a CANDIDATE fact and needs a yes/no, not
+// a value: "I found aID — use it for Aadhaar Number?"
+const CONFIRM_KINDS = new Set(["low_confidence", "sensitive_mapping"]);
+
+/** A value for a page-specific field: one-off, applied to that field only. */
+function setField(fieldId: string, label: string, value: string): void {
+  chat.bubble(`${label}: ${value}`, "user");
+  send({ type: "FA_SET_FIELD", fieldId, value });
+}
 
 /** A question the agent needs answered, routed to the right fact key. */
 function askQuestion(q: Question): void {
-  const key = q.fact_keys?.[0] || slug(q.field_id);
+  const key = q.fact_keys?.[0];
+  const label = q.label || q.field_id;
   const options = (q.options ?? []).filter(Boolean);
+
+  if (key && CONFIRM_KINDS.has(q.kind)) {
+    // Confirm the proposed binding; "No" falls back to asking for a value.
+    chat.prompt({
+      title: q.prompt,
+      chips: [
+        {
+          label: `Yes, use ${key}`,
+          onPick: () => {
+            chat.bubble(`Use ${key} for ${label}`, "user");
+            send({ type: "FA_BIND", fieldId: q.field_id, key });
+          },
+        },
+        {
+          label: "No, I'll give a value",
+          onPick: () => askQuestion({ ...q, kind: "missing_fact", fact_keys: [] }),
+        },
+      ],
+    });
+    return;
+  }
+
+  // A real profile fact: answer it and re-fill. A page-only field: set it directly.
+  const submit = key ? (v: string) => answer(key, v) : (v: string) => setField(q.field_id, label, v);
   chat.prompt({
-    title: q.prompt || q.field_id,
-    input: { placeholder: `Value for “${key}”`, onSubmit: (v) => answer(key, v) },
-    chips: options.length <= 12 ? options.map((o) => ({ label: o, onPick: () => answer(key, o) })) : [],
+    title: q.prompt || label,
+    input: { placeholder: key ? `Value for “${key}”` : `Value for “${label}”`, onSubmit: submit },
+    chips: options.length <= 12 ? options.map((o) => ({ label: o, onPick: () => submit(o) })) : [],
+  });
+}
+
+type EmptyField = {
+  field_id: string;
+  label: string;
+  input_type?: string;
+  human_only?: boolean;
+  consent?: boolean;
+  options?: string[] | null;
+};
+
+/** An empty required field the fill did not already ask about. What we ask
+ * depends on what the field is FOR: a captcha/credential is the user's to type
+ * on the page; a consent needs their explicit decision; a checkbox is yes/no. */
+function askEmptyField(f: EmptyField): void {
+  if (f.human_only) {
+    chat.bubble(`“${f.label}” is yours to complete on the page (CAPTCHA / OTP / password).`, "sys");
+    return;
+  }
+  if (f.consent) {
+    chat.prompt({
+      title: `The form asks you to confirm: “${f.label}” — tick it?`,
+      chips: [
+        { label: "Tick it", onPick: () => setField(f.field_id, f.label, "yes") },
+        { label: "Leave it", onPick: () => chat.bubble(`Left “${f.label}” unticked.`, "sys") },
+      ],
+    });
+    return;
+  }
+  if (f.input_type === "checkbox") {
+    chat.prompt({
+      title: `“${f.label}” — tick it?`,
+      chips: [
+        { label: "Yes", onPick: () => setField(f.field_id, f.label, "yes") },
+        { label: "No", onPick: () => chat.bubble(`Left “${f.label}” unticked.`, "sys") },
+      ],
+    });
+    return;
+  }
+  askQuestion({
+    field_id: f.field_id,
+    kind: "empty_required",
+    prompt: `“${f.label}” is empty — what should I put there?`,
+    fact_keys: [],
+    options: f.options ?? null,
+    label: f.label,
   });
 }
 
@@ -168,7 +247,7 @@ composer.addEventListener("submit", (e) => {
 
 type FormState = {
   text?: string;
-  empty_required?: { field_id: string; label: string; credential?: boolean; options?: string[] | null }[];
+  empty_required?: EmptyField[];
 };
 
 function showFillResult(result: Record<string, unknown>): void {
@@ -206,23 +285,13 @@ function showFillResult(result: Record<string, unknown>): void {
   const state = result.state as FormState | null;
   if (state?.text) chat.bubble(`Form status — ${state.text}`, "agent");
 
+  const labels = new Map((state?.empty_required ?? []).map((f) => [f.field_id, f.label]));
   const asked = new Set(questions.map((q) => q.field_id));
-  questions.forEach(askQuestion);
+  for (const q of questions) askQuestion({ ...q, label: labels.get(q.field_id) });
   // Empty required fields the fill did not already ask about (e.g. cascade-
   // revealed State/District) get an inline prompt so nothing is silently left.
   for (const f of state?.empty_required ?? []) {
-    if (asked.has(f.field_id)) continue;
-    if (f.credential) {
-      chat.bubble(`“${f.label}” has to be completed on the page itself (e.g. CAPTCHA).`, "sys");
-      continue;
-    }
-    askQuestion({
-      field_id: f.field_id,
-      kind: "empty_required",
-      prompt: `“${f.label}” is empty — what should I put there?`,
-      fact_keys: [],
-      options: f.options ?? null,
-    });
+    if (!asked.has(f.field_id)) askEmptyField(f);
   }
   for (const iss of issues) chat.issue(iss.label || iss.field_id, iss.detail);
 

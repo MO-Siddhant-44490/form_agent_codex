@@ -38,8 +38,13 @@ class ExtensionPlaywrightTransport:
         self._pw: Any = None
         self._context: Any = None
         self._worker: Any = None
+        self._session: TabSession | None = None
 
     def attach(self) -> TabSession:
+        """Launch the browser with the extension and bind to the fixture tab.
+        Idempotent: the driver's run_fill/apply_edits each call attach()."""
+        if self._session is not None:
+            return self._session
         from playwright.sync_api import sync_playwright
 
         self._pw = sync_playwright().start()
@@ -76,12 +81,13 @@ class ExtensionPlaywrightTransport:
         )
         if not state.get("attached"):
             raise RuntimeError(f"attach failed: {state.get('error')}")
-        return TabSession(
+        self._session = TabSession(
             run_id=state["runId"],
             tab_id=state["tabId"],
             origin=state["origin"],
             attached_at=datetime.now(UTC),
         )
+        return self._session
 
     def observe(self) -> PageObservation:
         state = self._worker.evaluate("() => globalThis.__formAgentTest.observe()")

@@ -214,9 +214,7 @@ class Repository:
             row = s.get(FieldMappingMemoryRow, (site, signature))
             return row.fact_key if row else None
 
-    def remember_mapping(
-        self, site: str, signature: str, fact_key: str, input_type: str
-    ) -> None:
+    def remember_mapping(self, site: str, signature: str, fact_key: str, input_type: str) -> None:
         with self.session() as s:
             row = s.get(FieldMappingMemoryRow, (site, signature))
             if row is None:

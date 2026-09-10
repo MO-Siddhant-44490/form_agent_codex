@@ -26,9 +26,7 @@ _CREDENTIAL_TOKENS = frozenset(
 
 # Prefix tokens that qualify a field group but not its meaning; stripped so the
 # meaningful token is matched (e.g. "shipping street-address" -> "street-address").
-_PREFIXES = frozenset(
-    {"shipping", "billing", "home", "work", "mobile", "fax", "pager"}
-)
+_PREFIXES = frozenset({"shipping", "billing", "home", "work", "mobile", "fax", "pager"})
 
 # Normalized autocomplete token -> ordered candidate fact-key substrings (most
 # specific first) and an optional value_type hint. A field is grounded to the

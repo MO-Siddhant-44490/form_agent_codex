@@ -23,7 +23,9 @@ def test_apply_edits_changes_only_the_targeted_field():
     city = FakeField("city", "text", "city", "City", value="London", required=True)
     transport = FakeTransport(fields=[name, city])
 
-    edit = apply_edits(transport, [_fact("full_name", "Ada Lovelace"), _fact("city", "Paris")], {"city"})
+    edit = apply_edits(
+        transport, [_fact("full_name", "Ada Lovelace"), _fact("city", "Paris")], {"city"}
+    )
 
     assert edit.filled_fields == ["city"]
     assert city.value == "Paris"  # changed

@@ -3,26 +3,36 @@
 // credential-like inputs (invariant 2).
 import type { FormField, TargetDescriptor } from "@form-agent/contracts";
 import { accessibleName, computedRole, explicitLabel, groupLegend } from "./labels";
+import { classifyPurpose, type FieldPurpose } from "./purpose";
 import { deepQueryAll } from "./shadow";
 import { detectComboboxes, detectDatePickers } from "./widgets";
 import { hasLayout, isVisible } from "./visibility";
 
 type Control = HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
 
-// Values of these inputs must never leave the page (invariant 2, threat T6).
-const CREDENTIAL_INPUT_TYPES = new Set(["password"]);
-const CREDENTIAL_AUTOCOMPLETE = new Set([
-  "current-password",
-  "new-password",
-  "one-time-code",
-  "cc-number",
-  "cc-csc",
-]);
+/** What the control is for — decides credential redaction, captcha/consent
+ * handling. Judged from the control's own text; see ./purpose. */
+export function purposeOf(el: Control): FieldPurpose {
+  return classifyPurpose({
+    inputType: inputType(el),
+    autocomplete: el.getAttribute("autocomplete"),
+    texts: [
+      explicitLabel(el),
+      accessibleName(el),
+      el.getAttribute("placeholder"),
+      el.getAttribute("aria-label"),
+      el.name,
+      el.id,
+      groupLegend(el),
+    ],
+  });
+}
 
-export function isCredentialControl(el: Control): boolean {
-  if (el instanceof HTMLInputElement && CREDENTIAL_INPUT_TYPES.has(el.type)) return true;
-  const autocomplete = el.getAttribute("autocomplete")?.trim().toLowerCase();
-  return autocomplete !== undefined && CREDENTIAL_AUTOCOMPLETE.has(autocomplete);
+/** Values of credentials must never leave the page (invariant 2, threat T6).
+ * A password-TYPE input is redacted whatever its purpose — a masked identifier
+ * is fillable but its value is still not observed (only its length is). */
+export function isRedactedControl(el: Control, purpose: FieldPurpose): boolean {
+  return purpose === "credential" || (el instanceof HTMLInputElement && el.type === "password");
 }
 
 function inputType(el: Control): string {
@@ -64,7 +74,11 @@ function customValidationError(el: Control): string | null {
   const root = el.getRootNode() as Document | ShadowRoot;
   const byId = (id: string): Element | null =>
     root instanceof Document ? root.getElementById(id) : root.querySelector(`[id="${id}"]`);
-  for (const attr of ["aria-errormessage", "aria-describedby"]) {
+  // aria-errormessage names an error outright; aria-describedby is only a
+  // description (react-select points it at the placeholder) unless the control
+  // is marked invalid.
+  const invalid = el.getAttribute("aria-invalid") === "true";
+  for (const attr of invalid ? ["aria-errormessage", "aria-describedby"] : ["aria-errormessage"]) {
     const ref = el.getAttribute(attr);
     if (ref) {
       for (const id of ref.split(/\s+/)) {
@@ -99,7 +113,9 @@ function validationMessage(el: Control): string | null {
 }
 
 function baseField(el: Control, fieldId: string): FormField {
-  const credential = isCredentialControl(el);
+  const purpose = purposeOf(el);
+  const credential = purpose === "credential";
+  const redacted = isRedactedControl(el, purpose);
   return {
     field_id: fieldId,
     target: descriptor(el, fieldId),
@@ -113,8 +129,11 @@ function baseField(el: Control, fieldId: string): FormField {
     checked: el instanceof HTMLInputElement && (el.type === "checkbox" || el.type === "radio")
       ? el.checked
       : null,
-    current_value: credential ? null : currentValue(el),
-    value_redacted: credential,
+    current_value: redacted ? null : currentValue(el),
+    value_redacted: redacted,
+    // A masked identifier's length lets a fill be verified without the value.
+    value_length: redacted && !credential ? (el.value ?? "").length : null,
+    purpose,
     options: el instanceof HTMLSelectElement
       ? Array.from(el.options).map((o) => o.value)
       : null,
@@ -161,6 +180,8 @@ function radioGroupField(radios: HTMLInputElement[], name: string): FormField {
     checked: checked !== undefined,
     current_value: checked?.value ?? null,
     value_redacted: false,
+    value_length: null,
+    purpose: purposeOf(first),
     options: radios.map((r) => r.value),
     option_labels: null,
     validation_message: null,
@@ -266,6 +287,8 @@ function mergeComboboxes(doc: Document, fields: FormField[]): void {
         checked: null,
         current_value: combo.currentValue,
         value_redacted: false,
+        value_length: null,
+        purpose: "standard",
         options,
         option_labels: optionLabels,
         validation_message: null,
@@ -307,7 +330,8 @@ function mergeDatePickers(doc: Document, fields: FormField[]): void {
         input_type: "date", label: explicitLabel(el), accessible_name: accessibleName(el),
         required: el.getAttribute("aria-required") === "true",
         disabled: false, readonly: false, visible: true, checked: null,
-        current_value: picker.currentValue, value_redacted: false, options: null, option_labels: null,
+        current_value: picker.currentValue, value_redacted: false, value_length: null,
+        purpose: "standard", options: null, option_labels: null,
         validation_message: null, max_length: null, nearby_text: groupLegend(el),
       });
     }

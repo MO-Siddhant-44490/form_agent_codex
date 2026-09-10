@@ -16,6 +16,7 @@ from form_contracts import (
     DialogInfo,
     DialogKind,
     FailureClass,
+    FieldPurpose,
     FormField,
     NavigationControl,
     NavigationKind,
@@ -31,6 +32,7 @@ from form_contracts import (
     VerificationStatus,
 )
 
+from ..purpose import classify_purpose
 from ..transport import ExecuteOutcome
 
 ORIGIN = "http://fake.test"
@@ -54,6 +56,9 @@ class FakeField:
     # When set, the field reports this validation message after being filled,
     # so verification returns VALIDATION_ERROR (recovery -> ask user).
     validation_error: str | None = None
+    # Perception classifies purpose from the control's text (see purpose.py);
+    # a fixture may pin it explicitly.
+    purpose: FieldPurpose | None = None
 
 
 def basic_form_fields() -> list[FakeField]:
@@ -93,6 +98,7 @@ class TransportCrash(RuntimeError):
 class FakeTransport:
     fields: list[FakeField] = dc_field(default_factory=basic_form_fields)
     login_page: bool = False
+    captcha_page: bool = False  # a captcha widget (or box) is present
     observation_seq: int = 0
     last_action_seq: int = 0
     executed_keys: dict[str, ActionResult] = dc_field(default_factory=dict)
@@ -172,6 +178,10 @@ class FakeTransport:
         )
 
     def _form_field(self, f: FakeField) -> FormField:
+        purpose = f.purpose or classify_purpose(
+            f.input_type, [f.label, f.name, f.field_id], f.autocomplete
+        )
+        redacted = purpose is FieldPurpose.CREDENTIAL or f.input_type == "password"
         return FormField(
             field_id=f.field_id,
             target=TargetDescriptor(
@@ -188,7 +198,10 @@ class FakeTransport:
             accessible_name=f.label,
             required=f.required,
             checked=f.checked,
-            current_value=f.value,
+            current_value=None if redacted else f.value,
+            value_redacted=redacted,
+            value_length=len(f.value) if redacted and f.value is not None else None,
+            purpose=purpose,
             options=f.options,
             validation_message=f.validation_error if f.value is not None else None,
         )
@@ -200,6 +213,7 @@ class FakeTransport:
             f"{f.field_id}|{f.input_type}" for f in active
         )
         fingerprint = hashlib.sha256(structure.encode()).hexdigest()
+        fields = [self._form_field(f) for f in active]
         return PageObservation(
             run_id=RUN_ID,
             tab_id=TAB_ID,
@@ -215,10 +229,12 @@ class FakeTransport:
                     confidence=0.9,
                 )
             ],
-            fields=[self._form_field(f) for f in active],
+            fields=fields,
             navigation=self._navigation(),
             dialogs=self._dialogs(),
             login_detected=self.login_page,
+            captcha_detected=self.captcha_page
+            or any(f.purpose is FieldPurpose.CAPTCHA for f in fields),
         )
 
     def _result(

@@ -51,12 +51,25 @@ def test_build_snapshot_covers_visible_fields():
 
 
 def test_summarize_reports_new_fields_and_empty_required_and_errors():
-    prev = [{"field_id": "country", "label": "Country", "required": True, "filled": True, "error": None}]
+    prev = [
+        {"field_id": "country", "label": "Country", "required": True, "filled": True, "error": None}
+    ]
     now = [
-        {"field_id": "country", "label": "Country", "required": True, "filled": True, "error": None},
+        {
+            "field_id": "country",
+            "label": "Country",
+            "required": True,
+            "filled": True,
+            "error": None,
+        },
         {"field_id": "state", "label": "State", "required": True, "filled": False, "error": None},
-        {"field_id": "addr", "label": "Address", "required": True, "filled": True,
-         "error": "must be under 50 characters"},
+        {
+            "field_id": "addr",
+            "label": "Address",
+            "required": True,
+            "filled": True,
+            "error": "must be under 50 characters",
+        },
     ]
     s = summarize(now, prev)
     assert [f["field_id"] for f in s["new_fields"]] == ["state", "addr"]

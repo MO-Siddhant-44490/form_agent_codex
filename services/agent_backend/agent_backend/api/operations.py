@@ -52,6 +52,17 @@ def _gateway(st):
     return getattr(st.mapper, "_gateway", None)
 
 
+def st_fields(state: dict | None) -> list[dict]:
+    """Every field the state summary knows a label for."""
+    if not state:
+        return []
+    return [
+        *state.get("empty_required", []),
+        *state.get("new_fields", []),
+        *state.get("errors", []),
+    ]
+
+
 def _reperceive(st, transport, run_id) -> dict | None:
     """Snapshot the form as it now stands and summarize the delta since the last
     turn. Best-effort; never fails the caller."""
@@ -66,6 +77,7 @@ def _reperceive(st, transport, run_id) -> dict | None:
 
 def _fill_payload(result, state) -> dict:
     """The result fields shared by a plain fill and a chat turn."""
+    labels = {s["field_id"]: s["label"] for s in st_fields(state)}
     return {
         "outcome": result.outcome.value,
         "filled": result.filled_fields,
@@ -74,6 +86,7 @@ def _fill_payload(result, state) -> dict:
                 "field_id": q.field_id,
                 "kind": q.kind.value,
                 "prompt": q.prompt,
+                "label": labels.get(q.field_id, q.field_id),
                 # fact_keys routes an answer to the right fact; options render choices.
                 "fact_keys": list(q.fact_keys),
                 "options": list(q.options) if q.options else None,
@@ -184,11 +197,50 @@ def _edit_reply(plan_reply: str, edit: EditResult, repaired: list[str]) -> tuple
     return reply, questions
 
 
+def _resolve_field(snapshot: list[dict], ref: str) -> str | None:
+    """The field_id a user/model reference names — by id, exact label, then a
+    case-insensitive containment either way ("aadhaar" ~ "Aadhaar Number/Virtual ID *")."""
+    low = ref.strip().lower()
+    for s in snapshot:
+        if s["field_id"] == ref or s["label"].strip().lower() == low:
+            return s["field_id"]
+    for s in snapshot:
+        lab = s["label"].strip().lower()
+        if low in lab or lab in low:
+            return s["field_id"]
+    return None
+
+
+def _edit(st, transport, session, plan_reply: str, fact_items, keys, bindings=None) -> dict:
+    """Apply a targeted edit (facts `keys`, plus explicit field<-fact `bindings`),
+    auto-repair, and build the honest result envelope."""
+    edit = apply_edits(
+        transport,
+        facts_from_payload(fact_items),
+        keys,
+        mapper=st.mapper,
+        bindings=bindings,
+        memory=st.memory,
+    )
+    repaired, _ = auto_repair(st, transport, session, fact_items)
+    reply, questions = _edit_reply(plan_reply, edit, repaired)
+    return {
+        "reply": reply,
+        "outcome": "EDITED",
+        "filled": edit.filled_fields,
+        "unresolved": [u["key"] for u in edit.unresolved],
+        "questions": questions,
+        "validation_issues": [],
+        "state": _reperceive(st, transport, session.run_id),
+        "detail": None,
+    }
+
+
 def chat(st, session, loop, text: str, fact_items: list[dict], send, history=None) -> None:
     """A reasoning chat turn: perceive the live form, interpret the message into
     a plan (LLM with a deterministic fallback), apply fact updates through the
     gated pipeline, auto-repair, and report the new state honestly. The plan can
-    only set facts / refill / explain."""
+    only set facts / bind a fact to a field / refill / explain."""
 
     def work(transport):
         snapshot = build_snapshot(transport.observe())
@@ -199,27 +251,23 @@ def chat(st, session, loop, text: str, fact_items: list[dict], send, history=Non
         limit = parse_char_limit(text)
         if limit is not None:
             updates = [{"key": u["key"], "value": clamp_length(u["value"], limit)} for u in updates]
-        payload = {"type": "chat_result", "reply": plan.reply, "applied": updates}
+        bindings = {}
+        for b in plan.bindings():
+            fid = _resolve_field(snapshot, b["field"])
+            if fid is not None and any(f.get("key") == b["key"] for f in fact_items):
+                bindings[fid] = b["key"]
+        payload = {"type": "chat_result", "reply": plan.reply, "applied": []}
 
-        if updates:
+        if updates or bindings:
             # Targeted edit: only the affected field(s), not a whole-form re-fill.
             merged = upsert_facts(fact_items, updates)
-            edit = apply_edits(
-                transport, facts_from_payload(merged), {u["key"] for u in updates}, mapper=st.mapper
-            )
-            repaired, _ = auto_repair(st, transport, session, merged)
-            reply, questions = _edit_reply(plan.reply, edit, repaired)
-            payload.update(
-                {
-                    "reply": reply,
-                    "outcome": "EDITED",
-                    "filled": edit.filled_fields,
-                    "questions": questions,
-                    "validation_issues": [],
-                    "state": _reperceive(st, transport, session.run_id),
-                    "detail": None,
-                }
-            )
+            keys = {u["key"] for u in updates} | set(bindings.values())
+            payload.update(_edit(st, transport, session, plan.reply, merged, keys, bindings))
+            # Only facts that actually landed (or are pure profile facts with no
+            # field on this page) are reported as applied — an unresolved value
+            # must not silently corrupt the profile.
+            unresolved = set(payload["unresolved"])
+            payload["applied"] = [u for u in updates if u["key"] not in unresolved]
         elif any(o.op == "refill" for o in plan.ops):
             result = run_fill(
                 transport, facts_from_payload(fact_items), mapper=st.mapper, memory=st.memory
@@ -229,6 +277,62 @@ def chat(st, session, loop, text: str, fact_items: list[dict], send, history=Non
             # Explain-only: report the current state without acting.
             payload["state"] = summarize(snapshot, st.form_state.get(session.run_id))
             st.form_state[session.run_id] = snapshot
+        return payload
+
+    _run_in_worker(st, session, loop, send, work, event="chat")
+
+
+def bind(st, session, loop, field_id: str, key: str, fact_items: list[dict], send) -> None:
+    """The user confirmed a proposed binding ("use aID for Aadhaar Number"):
+    fill that field from that fact, deterministically — no model call — and
+    remember the binding for this site."""
+
+    def work(transport):
+        snapshot = build_snapshot(transport.observe())
+        fid = _resolve_field(snapshot, field_id)
+        if fid is None or not any(f.get("key") == key for f in fact_items):
+            return {
+                "type": "chat_result",
+                "reply": f"I can't find '{field_id}' on the page or '{key}' in your profile.",
+                "applied": [],
+                "state": summarize(snapshot, st.form_state.get(session.run_id)),
+            }
+        label = next(s["label"] for s in snapshot if s["field_id"] == fid)
+        payload = {"type": "chat_result", "applied": []}
+        payload.update(
+            _edit(
+                st, transport, session, f"Using {key} for {label}.", fact_items, {key}, {fid: key}
+            )
+        )
+        return payload
+
+    _run_in_worker(st, session, loop, send, work, event="chat")
+
+
+TRANSIENT_PREFIX = "field:"
+
+
+def set_field(st, session, loop, field_id: str, value: str, fact_items: list[dict], send) -> None:
+    """The user answered for a field that has no profile fact — a consent box
+    ("Tick it"), a form-specific required field. Apply the value to THAT field
+    as a one-off, through the gated pipeline, without adding a page-specific
+    key to the profile."""
+
+    def work(transport):
+        snapshot = build_snapshot(transport.observe())
+        fid = _resolve_field(snapshot, field_id)
+        if fid is None:
+            return {
+                "type": "chat_result",
+                "reply": f"I can't find '{field_id}' on the page any more.",
+                "applied": [],
+                "state": summarize(snapshot, st.form_state.get(session.run_id)),
+            }
+        label = next(s["label"] for s in snapshot if s["field_id"] == fid)
+        key = f"{TRANSIENT_PREFIX}{fid}"
+        facts = [*fact_items, {"key": key, "value": value}]
+        payload = {"type": "chat_result", "applied": []}
+        payload.update(_edit(st, transport, session, f"Set {label}.", facts, {key}, {fid: key}))
         return payload
 
     _run_in_worker(st, session, loop, send, work, event="chat")

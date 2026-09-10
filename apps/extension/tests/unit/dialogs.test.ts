@@ -36,3 +36,33 @@ describe("dialog detection with safe dismiss target", () => {
     expect(detectDialogs(document)[0]!.dismiss_target).toBeNull();
   });
 });
+
+describe("a modal that holds the form", () => {
+  it("is flagged contains_form so the driver does not dismiss it", async () => {
+    const { detectDialogs } = await import("../../src/perception/dialogs");
+    document.body.innerHTML = `
+      <div role="dialog" id="register">
+        <h2>Register Youth</h2>
+        <label for="m">Mobile Number</label><input id="m" type="number">
+        <button>Close</button><button>SUBMIT</button>
+      </div>
+      <div role="dialog" id="notice"><p>Site notice</p><button>Close</button></div>`;
+    const dialogs = detectDialogs(document);
+    expect(dialogs.find((d) => d.dialog_id === "register")?.contains_form).toBe(true);
+    expect(dialogs.find((d) => d.dialog_id === "notice")?.contains_form).toBe(false);
+  });
+});
+
+describe("aria-describedby is not an error", () => {
+  it("only counts as a validation message when the control is aria-invalid", async () => {
+    const { discoverFields } = await import("../../src/perception/fields");
+    document.body.innerHTML = `
+      <label for="s">State</label>
+      <input id="s" type="text" aria-describedby="s-ph"><span id="s-ph">Select States</span>
+      <label for="t">Town</label>
+      <input id="t" type="text" aria-invalid="true" aria-describedby="t-err"><span id="t-err">Required</span>`;
+    const fields = discoverFields(document);
+    expect(fields.find((f) => f.field_id === "s")?.validation_message).toBeNull();
+    expect(fields.find((f) => f.field_id === "t")?.validation_message).toBe("Required");
+  });
+});

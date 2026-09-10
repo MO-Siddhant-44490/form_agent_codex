@@ -10,6 +10,8 @@ from enum import StrEnum
 
 from form_contracts import PageObservation
 
+from .planner import HUMAN_ONLY_PURPOSES
+
 
 class IssueKind(StrEnum):
     VALIDATION_ERROR = "validation_error"  # the site rejects the current value
@@ -55,7 +57,9 @@ def validate_form(observation: PageObservation, expected_filled: set[str]) -> Va
                 )
             )
             continue
-        has_value = f.current_value not in (None, "") or f.checked
+        if f.purpose in HUMAN_ONLY_PURPOSES:
+            continue  # the human's to complete; reported via the snapshot, not as a defect
+        has_value = f.current_value not in (None, "") or f.checked or bool(f.value_length)
         if f.required and not has_value:
             kind = (
                 IssueKind.UNVERIFIED if f.field_id in expected_filled else IssueKind.REQUIRED_EMPTY

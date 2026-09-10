@@ -82,11 +82,18 @@ export function detectDialogs(doc: Document): DialogInfo[] {
 
     const text = dialogText(el).toLowerCase();
     const kind = COOKIE_RE.test(text) ? "cookie_banner" : "modal";
+    // A modal that holds visible, fillable controls IS the form (a "Register"
+    // modal), not an overlay in the way of it.
+    const containsForm = deepQueryAll<HTMLElement>(
+      el,
+      "input:not([type=hidden]):not([type=button]):not([type=submit]):not([type=checkbox]):not([type=radio]), select, textarea",
+    ).some(isVisible);
     dialogs.push({
       dialog_id: el.id || `dialog-${i}`,
       kind,
       text_snippet: el.textContent?.trim().slice(0, 200) || null,
       dismiss_target: findDismiss(el, i),
+      contains_form: containsForm,
     });
   });
   return dialogs;

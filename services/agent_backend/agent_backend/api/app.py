@@ -170,6 +170,18 @@ def create_app(state: AppState | None = None) -> FastAPI:
             "chat": lambda m: operations.chat(
                 st, session, loop, m.get("text", ""), m.get("facts", []), send, m.get("history", [])
             ),
+            "set_field": lambda m: operations.set_field(
+                st,
+                session,
+                loop,
+                m.get("field_id", ""),
+                m.get("value", ""),
+                m.get("facts", []),
+                send,
+            ),
+            "bind": lambda m: operations.bind(
+                st, session, loop, m.get("field_id", ""), m.get("key", ""), m.get("facts", []), send
+            ),
             "parse_document": lambda m: operations.parse_document(
                 st,
                 session,

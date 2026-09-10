@@ -166,9 +166,7 @@ def test_sensitive_fact_from_model_requires_confirmation():
     transport = FakeTransport(fields=tricky_fields())
     obs = transport.observe()
     target = obs.fields[0].field_id  # obscure name; only the model could map it
-    gateway = make_gateway(
-        [FieldMapping(field_id=target, fact_key="national_id", confidence=0.97)]
-    )
+    gateway = make_gateway([FieldMapping(field_id=target, fact_key="national_id", confidence=0.97)])
     outcome = ModelAssistedMapper(gateway).map(obs, {"national_id": _sensitive_fact()})
 
     assert target not in outcome.assignments

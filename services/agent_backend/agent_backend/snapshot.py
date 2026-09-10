@@ -5,7 +5,7 @@ The reasoning chat layer works from THIS, so the agent is always aware of the
 form's current state instead of acting blind (plan.md: complete perception, not
 deterministic re-fills)."""
 
-from form_contracts import FormField, PageObservation
+from form_contracts import FieldPurpose, FormField, PageObservation
 
 _NON_FIELD = frozenset({"submit", "button", "reset", "image"})
 
@@ -30,6 +30,8 @@ def is_filled(field: FormField) -> bool:
     on its '--Select one--' placeholder is empty, not filled."""
     if field.input_type in ("checkbox", "radio"):
         return field.checked is True
+    if field.value_redacted:
+        return bool(field.value_length)
     value = field.current_value
     if not value:
         return False
@@ -63,7 +65,11 @@ def build_snapshot(observation: PageObservation) -> list[dict]:
                 "filled": is_filled(f),
                 "value": _display_value(f),
                 "error": f.validation_message,
-                "credential": f.value_redacted,
+                # The human's alone: a credential or captcha ("complete it on
+                # the page"); a consent needs their explicit yes.
+                "human_only": f.purpose in (FieldPurpose.CREDENTIAL, FieldPurpose.CAPTCHA),
+                "consent": f.purpose is FieldPurpose.CONSENT,
+                "purpose": f.purpose.value,
                 "max_length": f.max_length,
                 "options": list(f.options) if f.options else None,
                 "option_labels": list(f.option_labels) if f.option_labels else None,
@@ -81,16 +87,21 @@ def summarize(snapshot: list[dict], previous: list[dict] | None = None) -> dict:
     empty_required = [f for f in snapshot if f["required"] and not f["filled"]]
     errors = [f for f in snapshot if f["error"]]
     filled = [f for f in snapshot if f["filled"]]
+    needs_value = [f for f in empty_required if not f.get("human_only") and not f.get("consent")]
+    yours = [f for f in empty_required if f.get("human_only")]
+    consents = [f for f in snapshot if f.get("consent") and not f["filled"]]
 
     parts = [f"{len(filled)} of {len(snapshot)} field(s) filled."]
     if new_fields:
         parts.append("Just appeared: " + ", ".join(f["label"] for f in new_fields) + ".")
-    if empty_required:
-        parts.append("Still needs a value: " + ", ".join(f["label"] for f in empty_required) + ".")
+    if needs_value:
+        parts.append("Still needs a value: " + ", ".join(f["label"] for f in needs_value) + ".")
+    if consents:
+        parts.append("Needs your decision: " + ", ".join(f["label"] for f in consents) + ".")
+    if yours:
+        parts.append("Yours to complete on the page: " + ", ".join(f["label"] for f in yours) + ".")
     if errors:
-        parts.append(
-            "Issues: " + "; ".join(f'{f["label"]} — {f["error"]}' for f in errors) + "."
-        )
+        parts.append("Issues: " + "; ".join(f"{f['label']} — {f['error']}" for f in errors) + ".")
     return {
         "text": " ".join(parts),
         "new_fields": new_fields,

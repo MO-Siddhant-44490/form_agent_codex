@@ -26,6 +26,27 @@ class TargetDescriptor(StrictModel):
 CREDENTIAL_INPUT_TYPES = frozenset({"password"})
 
 
+class FieldPurpose(StrEnum):
+    """What a control is FOR, beyond its input type. Perception classifies it
+    from the control's own text (label, name, placeholder, autocomplete) so the
+    backend can apply the right rule without site-specific knowledge:
+
+    - STANDARD: an ordinary data field, fillable from facts. Includes masked
+      identifiers (an Aadhaar/PAN/account number rendered as a password-type
+      input) — their VALUE stays redacted, but they are not login secrets.
+    - CREDENTIAL: a password / OTP / PIN / card secret. Never read, never
+      written (invariant 2); the human enters it on the page.
+    - CAPTCHA: a human-only challenge (text captcha box). Never written.
+    - CONSENT: a declaration/consent control ("I consent to…"). Only set on the
+      user's explicit say-so, never inferred from a profile.
+    """
+
+    STANDARD = "standard"
+    CREDENTIAL = "credential"
+    CAPTCHA = "captcha"
+    CONSENT = "consent"
+
+
 class FormField(StrictModel):
     field_id: str
     target: TargetDescriptor
@@ -39,6 +60,10 @@ class FormField(StrictModel):
     checked: bool | None = None
     current_value: str | None = None
     value_redacted: bool = False
+    # Length of a redacted value (masked identifier) so a fill can still be
+    # verified and the field known as filled without the value leaving the page.
+    value_length: int | None = None
+    purpose: FieldPurpose = FieldPurpose.STANDARD
     options: list[str] | None = None  # option values (what the executor selects)
     option_labels: list[str] | None = None  # human labels, parallel to options
     validation_message: str | None = None
@@ -87,6 +112,9 @@ class DialogInfo(StrictModel):
     kind: DialogKind
     text_snippet: str | None = None
     dismiss_target: TargetDescriptor | None = None
+    # The dialog CONTAINS the form's fields (a registration modal): it is the
+    # working surface, not an obstacle — the driver must not dismiss it.
+    contains_form: bool = False
 
 
 class FrameInfo(StrictModel):

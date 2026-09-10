@@ -344,6 +344,22 @@ export async function answer(key: string, value: string): Promise<void> {
   sendOperation(session, { type: "start_fill", facts: session.facts });
 }
 
+/** The user confirmed a proposed binding: fill the field from the existing
+ * fact (no model call) and let the backend remember it for this site. */
+export async function bindFact(fieldId: string, key: string): Promise<void> {
+  const session = await liveSession();
+  if (!session) return;
+  sendOperation(session, { type: "bind", field_id: fieldId, key, facts: session.facts });
+}
+
+/** A one-off value for a page-specific field (consent tick, form-only box):
+ * applied to that field through the gated pipeline, never stored as a fact. */
+export async function setField(fieldId: string, value: string): Promise<void> {
+  const session = await liveSession();
+  if (!session) return;
+  sendOperation(session, { type: "set_field", field_id: fieldId, value, facts: session.facts });
+}
+
 /** A free-text message: the backend reasons over the live form and acts. */
 export async function chatTurn(text: string): Promise<void> {
   const session = await liveSession();

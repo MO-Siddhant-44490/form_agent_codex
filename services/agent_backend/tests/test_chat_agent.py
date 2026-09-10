@@ -29,7 +29,9 @@ def test_clamp_length_backs_off_to_a_word_boundary():
 def test_repair_values_reads_corrections_and_drops_credentials():
     gw = FakeModelAdapter()
     gw.chat_response = '{"corrections": {"address": "Flat 1204, Palm Beach Rd", "password": "x"}}'
-    out = repair_values(gw, [{"key": "address", "label": "Address", "value": "long...", "error": "too long"}])
+    out = repair_values(
+        gw, [{"key": "address", "label": "Address", "value": "long...", "error": "too long"}]
+    )
     assert out == {"address": "Flat 1204, Palm Beach Rd"}
 
 
@@ -93,3 +95,20 @@ def test_interpret_or_fallback_recovers_from_bad_model_output():
     # Falls back to deterministic parsing of the user's text.
     plan = interpret_or_fallback(gw, "refill", [], [])
     assert plan.ops[0].op == "refill"
+
+
+def test_bind_op_binds_a_fact_to_a_field_instead_of_storing_a_value():
+    # "aid is my aadhaar id" is a statement about MEANING, not a value.
+    plan = parse_plan(
+        '{"reply":"Using aID for Aadhaar Number.","ops":['
+        '{"op":"bind","field":"Aadhaar Number/Virtual ID *","key":"aID"},'
+        '{"op":"bind","field":"Password","key":"password"}]}'
+    )
+    assert plan.fact_updates() == []  # nothing written into the profile
+    assert plan.bindings() == [{"field": "Aadhaar Number/Virtual ID *", "key": "aID"}]
+
+
+def test_fallback_understands_use_x_for_y():
+    plan = fallback_interpret("use aID for Aadhaar Number")
+    assert plan.bindings() == [{"field": "Aadhaar Number", "key": "aID"}]
+    assert plan.fact_updates() == []

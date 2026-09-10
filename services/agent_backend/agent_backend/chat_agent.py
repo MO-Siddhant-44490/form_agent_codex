@@ -20,10 +20,11 @@ from .safety import is_credential_key
 
 @dataclass
 class ChatOp:
-    op: str  # "set_fact" | "refill" | "explain"
+    op: str  # "set_fact" | "bind" | "refill" | "explain"
     key: str | None = None
     value: str | None = None
     text: str | None = None
+    field: str | None = None  # bind: the form field's label (or id)
 
 
 @dataclass
@@ -36,6 +37,14 @@ class ChatPlan:
             {"key": o.key, "value": o.value}
             for o in self.ops
             if o.op == "set_fact" and o.key and o.value is not None
+        ]
+
+    def bindings(self) -> list[dict]:
+        """User-stated field <- fact bindings ("aid is my Aadhaar id")."""
+        return [
+            {"field": o.field, "key": o.key}
+            for o in self.ops
+            if o.op == "bind" and o.field and o.key
         ]
 
     def wants_refill(self) -> bool:
@@ -60,13 +69,21 @@ Operations you may return:
   the value MUST be exactly one of those choices (map a typo or synonym to the
   right choice — "fmale"/"F" -> "Female"). Use a fact key that already exists or
   clearly names a form field.
+- {"op":"bind","field":<form field label exactly as listed>,"key":<existing fact key>}
+  — the user is telling you which FACT belongs in which FIELD, not giving a
+  value: "aid is my aadhaar id", "use mob for the phone field", "yes, use aID".
+  The existing fact's value is then filled into that field.
 - {"op":"refill"} — re-fill the form from the current facts (e.g. to fill fields
   that just appeared).
 - {"op":"explain","text":<answer>} — answer a question about the form's state
   without changing anything.
 
 Rules:
-- Never set a password, OTP, CAPTCHA, card number, or CVV.
+- set_fact ONLY when the user gives a VALUE. If the message explains what a
+  fact key MEANS or which field it goes in, use bind — never store the field's
+  name as the fact's value.
+- Never set a password, OTP, CAPTCHA, card number, or CVV. Never tick a
+  consent/declaration box unless the user explicitly asks for that box.
 - Prefer a set_fact with a concrete value over asking the user, when the request
   is clear.
 - Respond with ONLY a JSON object:
@@ -126,6 +143,10 @@ def parse_plan(raw: str) -> ChatPlan:
             key, value = item.get("key"), item.get("value")
             if key and value is not None and not is_credential_key(str(key)):
                 ops.append(ChatOp("set_fact", key=str(key), value=str(value)))
+        elif kind == "bind":
+            fld, key = item.get("field"), item.get("key")
+            if fld and key and not is_credential_key(str(key)):
+                ops.append(ChatOp("bind", key=str(key), field=str(fld)))
         elif kind == "refill":
             ops.append(ChatOp("refill"))
         elif kind == "explain":
@@ -152,6 +173,14 @@ def fallback_interpret(text: str) -> ChatPlan:
     t = text.strip()
     if re.fullmatch(r"(re-?fill|fill(\s+it)?(\s+again)?|try\s+again|retry|go)", t, re.I):
         return ChatPlan(reply="Re-filling the form…", ops=[ChatOp("refill")])
+    m = re.match(
+        r"^(?:use|put)\s+(\S+)\s+(?:for|in|into|as)\s+(?:the\s+)?(.+?)(?:\s+field)?$", t, re.I
+    )
+    if m:
+        return ChatPlan(
+            reply=f"Using {m.group(1)} for {m.group(2)}…",
+            ops=[ChatOp("bind", key=m.group(1), field=m.group(2).strip())],
+        )
     m = re.match(r"^(?:set|change|update|make)\s+(.+?)\s+(?:to|=|:)\s+(.+)$", t, re.I)
     if not m:
         m = re.match(r"^(.+?)\s*[:=]\s*(.+)$", t)

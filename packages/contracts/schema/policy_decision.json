@@ -11,6 +11,7 @@
     "PolicyRule": {
       "enum": [
         "credential_field",
+        "human_only_field",
         "hidden_field",
         "unknown_target",
         "value_without_provenance",

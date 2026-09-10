@@ -199,7 +199,9 @@ def test_prepare_reattempt_stages_interaction_hints():
     from form_contracts import RecoveryStrategy
 
     field = _field(input_type="combobox")
-    assignment = Assignment(field=field, fact=_fact("district", "Thane"), value="Thane", checked=None)
+    assignment = Assignment(
+        field=field, fact=_fact("district", "Thane"), value="Thane", checked=None
+    )
     hints: dict = {}
     overrides: dict = {}
 

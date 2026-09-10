@@ -1,10 +1,9 @@
 // Page-level observation: classification signals, dialogs, frames,
 // fingerprinting (plan.md §8.2). Read-only; never mutates the page.
-import type { PageObservation } from "@form-agent/contracts";
+import type { FormField, PageObservation } from "@form-agent/contracts";
 import { detectDialogs } from "./dialogs";
 import { discoverFields } from "./fields";
 import { summarizeNavigation } from "./navigation";
-import { isVisible } from "./visibility";
 
 const CAPTCHA_SELECTORS = [
   ".g-recaptcha",
@@ -15,16 +14,15 @@ const CAPTCHA_SELECTORS = [
   'iframe[src*="turnstile"]',
 ].join(", ");
 
-export function detectLogin(doc: Document): boolean {
-  return Array.from(
-    doc.querySelectorAll<HTMLInputElement>(
-      'input[type="password"], input[autocomplete="current-password"]',
-    ),
-  ).some((el) => isVisible(el));
+/** A login / MFA gate: a visible password-type CREDENTIAL field. A masked
+ * identifier (Aadhaar as a password input) is not a login. */
+export function detectLogin(doc: Document, fields: FormField[] = discoverFields(doc)): boolean {
+  return fields.some((f) => f.purpose === "credential" && f.input_type === "password");
 }
 
-export function detectCaptcha(doc: Document): boolean {
-  return doc.querySelector(CAPTCHA_SELECTORS) !== null;
+/** A captcha widget, or a captcha text box among the fields. */
+export function detectCaptcha(doc: Document, fields: FormField[] = discoverFields(doc)): boolean {
+  return doc.querySelector(CAPTCHA_SELECTORS) !== null || fields.some((f) => f.purpose === "captcha");
 }
 
 function detectFrames(doc: Document): PageObservation["iframes"] {
@@ -74,8 +72,8 @@ export async function buildObservation(
   const win = doc.defaultView;
   if (!win) throw new Error("document has no window");
   const fields = discoverFields(doc);
-  const loginDetected = detectLogin(doc);
-  const captchaDetected = detectCaptcha(doc);
+  const loginDetected = detectLogin(doc, fields);
+  const captchaDetected = detectCaptcha(doc, fields);
 
   // Structural fingerprint: url + title + field structure (not values).
   const structure = fields.map((f) => `${f.field_id}|${f.input_type}|${f.required}`);

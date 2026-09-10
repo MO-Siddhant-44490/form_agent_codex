@@ -3,6 +3,11 @@
     "DialogInfo": {
       "additionalProperties": false,
       "properties": {
+        "contains_form": {
+          "default": false,
+          "title": "Contains Form",
+          "type": "boolean"
+        },
         "dialog_id": {
           "title": "Dialog Id",
           "type": "string"
@@ -49,6 +54,17 @@
         "other"
       ],
       "title": "DialogKind",
+      "type": "string"
+    },
+    "FieldPurpose": {
+      "description": "What a control is FOR, beyond its input type. Perception classifies it\nfrom the control's own text (label, name, placeholder, autocomplete) so the\nbackend can apply the right rule without site-specific knowledge:\n\n- STANDARD: an ordinary data field, fillable from facts. Includes masked\n  identifiers (an Aadhaar/PAN/account number rendered as a password-type\n  input) \u2014 their VALUE stays redacted, but they are not login secrets.\n- CREDENTIAL: a password / OTP / PIN / card secret. Never read, never\n  written (invariant 2); the human enters it on the page.\n- CAPTCHA: a human-only challenge (text captcha box). Never written.\n- CONSENT: a declaration/consent control (\"I consent to\u2026\"). Only set on the\n  user's explicit say-so, never inferred from a profile.",
+      "enum": [
+        "standard",
+        "credential",
+        "captcha",
+        "consent"
+      ],
+      "title": "FieldPurpose",
       "type": "string"
     },
     "FormField": {
@@ -169,6 +185,10 @@
           "default": null,
           "title": "Options"
         },
+        "purpose": {
+          "$ref": "#/$defs/FieldPurpose",
+          "default": "standard"
+        },
         "readonly": {
           "default": false,
           "title": "Readonly",
@@ -193,6 +213,18 @@
           ],
           "default": null,
           "title": "Validation Message"
+        },
+        "value_length": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value Length"
         },
         "value_redacted": {
           "default": false,

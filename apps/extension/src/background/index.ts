@@ -3,7 +3,15 @@
 // chat session (./session — fill, chat, answer, document parse).
 import type { ApprovalToken } from "@form-agent/contracts";
 import type { ExecuteOutcome, PanelCommand, SessionState } from "../shared/messages";
-import { DEFAULT_BACKEND_URL, answer, chatTurn, fill, parseDocument } from "./session";
+import {
+  DEFAULT_BACKEND_URL,
+  answer,
+  bindFact,
+  chatTurn,
+  fill,
+  parseDocument,
+  setField,
+} from "./session";
 import {
   attachActiveTab,
   attachToTab,
@@ -34,6 +42,12 @@ chrome.runtime.onMessage.addListener(
         break;
       case "FA_CHAT":
         void chatTurn(message.text);
+        break;
+      case "FA_BIND":
+        void bindFact(message.fieldId, message.key);
+        break;
+      case "FA_SET_FIELD":
+        void setField(message.fieldId, message.value);
         break;
       case "FA_PARSE_DOC":
         void parseDocument(message);

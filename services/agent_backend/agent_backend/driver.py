@@ -30,7 +30,7 @@ from form_contracts import (
     VerificationStatus,
 )
 
-from .mapper import DeterministicMapper, Mapper, MappingOutcome
+from .mapper import Assignment, DeterministicMapper, Mapper, MappingOutcome, user_binding
 from .memory import MappingMemory, field_signature, site_key
 from .planner import assignment_satisfied, build_action_for, normalize_value
 from .policy import check_action
@@ -261,12 +261,18 @@ def apply_edits(
     changed_keys: set[str],
     mapper: Mapper | None = None,
     max_actions: int = 12,
+    bindings: dict[str, str] | None = None,
+    memory: MappingMemory | None = None,
 ) -> EditResult:
     """Targeted edit: change only the field(s) bound to `changed_keys` (plus any
     required dependent revealed by the change), instead of re-running the whole
     form. Avoids the churn and step-budget exhaustion of a full re-fill for a
     one-field correction. Every action still passes the policy gate and is
-    independently verified; never submits."""
+    independently verified; never submits.
+
+    `bindings` are explicit field_id -> fact_key assignments the USER made
+    ("use aID for Aadhaar Number"): they override the mapper for those fields
+    and, once verified, are remembered so the site maps automatically next time."""
     mapper = mapper or DeterministicMapper()
     facts_by_key = {f.key: f for f in facts}
     result = EditResult()
@@ -274,6 +280,15 @@ def apply_edits(
     session = transport.attach()
     observation = transport.observe()
     seq = 0
+
+    def remember(field_id: str, assignment) -> None:
+        if memory is None or assignment.fact.key.startswith("field:"):
+            return  # a one-off page-specific value is not a reusable binding
+        fld = next((f for f in observation.fields if f.field_id == field_id), None)
+        if fld is not None:
+            memory.remember(
+                site_key(session.origin), field_signature(fld), assignment.fact.key, fld.input_type
+            )
 
     def fill(field_id, assignment) -> str:
         nonlocal observation, seq
@@ -322,6 +337,16 @@ def apply_edits(
 
     # Pass 1: the explicitly-changed facts.
     mapping = mapper.map(observation, facts_by_key)
+    for field_id, key in (bindings or {}).items():
+        fld = next((f for f in observation.fields if f.field_id == field_id), None)
+        if fld is None or key not in facts_by_key:
+            continue
+        bound = user_binding(fld, facts_by_key[key])
+        if isinstance(bound, Assignment):
+            mapping.assignments[field_id] = bound
+            mapping.questions = [q for q in mapping.questions if q.field_id != field_id]
+        else:
+            mapping.questions.append(bound)
     addressed: set[str] = set()
     for field_id, assignment in list(mapping.assignments.items()):
         if assignment.fact.key not in changed_keys or seq >= max_actions:
@@ -330,6 +355,8 @@ def apply_edits(
         status = fill(field_id, assignment)
         if status in ("ok", "satisfied"):
             result.filled_fields.append(field_id)
+            if status == "ok":
+                remember(field_id, assignment)
         elif status in ("failed", "blocked"):
             result.failed_fields.append(field_id)
 
@@ -412,9 +439,12 @@ def run_fill(
     stability_waits = 0
     final_settles = 0
     while result.steps_used < budgets.max_steps:
-        if observation.login_detected or observation.captcha_detected:
+        # A login / MFA gate is the human's (invariant 2). A captcha on the page
+        # is too — but only that box: the rest of the form is still filled, and
+        # the captcha is reported as theirs to complete. Submission is never ours.
+        if observation.login_detected:
             result.outcome = RunOutcome.NEEDS_USER
-            result.detail = "login or CAPTCHA present; human takeover required (invariant 2)"
+            result.detail = "login present; human takeover required (invariant 2)"
             return result
 
         # Cascading dropdowns and dynamic fields load asynchronously (e.g.
@@ -444,7 +474,9 @@ def run_fill(
             (
                 d
                 for d in observation.dialogs
-                if d.dismiss_target is not None and dialogs_tried.get(d.dialog_id, 0) < 2
+                if d.dismiss_target is not None
+                and not d.contains_form  # the form's own modal is not an obstacle
+                and dialogs_tried.get(d.dialog_id, 0) < 2
             ),
             None,
         )

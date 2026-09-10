@@ -8,10 +8,14 @@ from form_contracts import (
     BrowserAction,
     DocumentFact,
     ExpectedEffect,
+    FieldPurpose,
     FormField,
     PageObservation,
     RiskLevel,
 )
+
+# Fields the agent never writes: the human's alone (invariant 2).
+HUMAN_ONLY_PURPOSES = frozenset({FieldPurpose.CREDENTIAL, FieldPurpose.CAPTCHA})
 
 KIND_FOR_INPUT_TYPE: dict[str, ActionKind] = {
     "text": ActionKind.SET_TEXT,
@@ -19,6 +23,9 @@ KIND_FOR_INPUT_TYPE: dict[str, ActionKind] = {
     "tel": ActionKind.SET_TEXT,
     "url": ActionKind.SET_TEXT,
     "textarea": ActionKind.SET_TEXT,
+    # A masked identifier (Aadhaar/PAN rendered as a password input) is typed
+    # like text; a real credential never reaches the planner (purpose gate).
+    "password": ActionKind.SET_TEXT,
     "date": ActionKind.SET_DATE,
     "number": ActionKind.SET_NUMBER,
     "select-one": ActionKind.SELECT_OPTION,
@@ -29,9 +36,9 @@ KIND_FOR_INPUT_TYPE: dict[str, ActionKind] = {
 
 
 def match_fact(field: FormField, facts_by_key: dict[str, DocumentFact]) -> DocumentFact | None:
-    """Slice 1 mapping: match on the field's name attribute, exact first then
-    case-insensitively (a control named "District" is the same field as a
-    "district" fact — case is a presentation detail, not identity)."""
+    """Direct (high-trust) mapping: match on the field's name attribute, exact
+    first then case-insensitively (a control named "District" is the same field
+    as a "district" fact — case is a presentation detail, not identity)."""
     name = field.target.name_attr
     if name is None:
         return None
@@ -51,7 +58,16 @@ def desired_checked(fact: DocumentFact) -> bool:
 def is_satisfied(field: FormField, fact: DocumentFact) -> bool:
     if field.input_type == "checkbox":
         return field.checked == desired_checked(fact)
+    if field.value_redacted:
+        return redacted_holds(field, fact.value)
     return field.current_value == fact.value
+
+
+def redacted_holds(field: FormField, value: str | None) -> bool:
+    """A redacted (masked) field never reports its value; the strongest check
+    available without the value leaving the page is that it holds a value of
+    the expected length."""
+    return bool(value) and field.value_length == len(value)
 
 
 def mappable_fields(
@@ -60,6 +76,8 @@ def mappable_fields(
     pairs: list[tuple[FormField, DocumentFact]] = []
     for field in observation.fields:
         if field.disabled or field.readonly or field.input_type not in KIND_FOR_INPUT_TYPE:
+            continue
+        if field.purpose in HUMAN_ONLY_PURPOSES:
             continue
         fact = match_fact(field, facts_by_key)
         if fact is not None:
@@ -75,7 +93,10 @@ def unmapped_required_fields(
     return [
         field.field_id
         for field in observation.fields
-        if field.required and not field.disabled and match_fact(field, facts_by_key) is None
+        if field.required
+        and not field.disabled
+        and field.purpose not in HUMAN_ONLY_PURPOSES
+        and match_fact(field, facts_by_key) is None
     ]
 
 
@@ -175,6 +196,8 @@ def build_action_for(
 def assignment_satisfied(field: FormField, value: str | None, checked: bool | None) -> bool:
     if checked is not None:
         return field.checked == checked
+    if field.value_redacted:
+        return redacted_holds(field, value)
     if field.current_value == value:
         return True
     # Option controls store the option CODE; `value` may be the human label

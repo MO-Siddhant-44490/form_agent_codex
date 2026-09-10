@@ -55,6 +55,7 @@ class UserQuestion(StrictModel):
 
 class PolicyRule(StrEnum):
     CREDENTIAL_FIELD = "credential_field"
+    HUMAN_ONLY_FIELD = "human_only_field"  # captcha and the like: the human's
     HIDDEN_FIELD = "hidden_field"
     UNKNOWN_TARGET = "unknown_target"
     VALUE_WITHOUT_PROVENANCE = "value_without_provenance"

@@ -6,6 +6,7 @@ provenance of the value (invariants 2, 5, 11)."""
 from form_contracts import (
     ActionKind,
     BrowserAction,
+    FieldPurpose,
     FormField,
     PageObservation,
     PolicyDecision,
@@ -14,6 +15,7 @@ from form_contracts import (
 )
 
 from .mapper import match_option as _match_option
+from .purpose import effective_purpose
 
 # Field-mutating kinds must target a field present in the fresh observation.
 VALUE_KINDS = frozenset(
@@ -27,7 +29,10 @@ VALUE_KINDS = frozenset(
     }
 )
 
-CREDENTIAL_INPUT_TYPES = frozenset({"password"})
+# A credential is decided by the field's PURPOSE (perception classifies it from
+# the control's own text) — a masked identifier rendered as a password input is
+# profile data, not a login secret. A password-type input with no purpose
+# signal at all is treated as a credential by perception, so this stays safe.
 
 
 def _block(action: BrowserAction, rule: PolicyRule, detail: str) -> PolicyDecision:
@@ -84,11 +89,18 @@ def check_action(
             )
         if not field.visible:
             return _block(action, PolicyRule.HIDDEN_FIELD, f"{field.field_id} is not visible")
-        if field.value_redacted or field.input_type in CREDENTIAL_INPUT_TYPES:
+        purpose = effective_purpose(field)
+        if purpose is FieldPurpose.CREDENTIAL:
             return _block(
                 action,
                 PolicyRule.CREDENTIAL_FIELD,
-                f"{field.field_id} is credential-like; never filled (invariant 2)",
+                f"{field.field_id} is a credential; never filled (invariant 2)",
+            )
+        if purpose is FieldPurpose.CAPTCHA:
+            return _block(
+                action,
+                PolicyRule.HUMAN_ONLY_FIELD,
+                f"{field.field_id} is a captcha; the human completes it (invariant 2)",
             )
         if action.target and action.target.field_id not in approved_values:
             return _block(

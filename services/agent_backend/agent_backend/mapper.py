@@ -11,6 +11,7 @@ from typing import Protocol
 
 from form_contracts import (
     DocumentFact,
+    FieldPurpose,
     FormField,
     ModelCallMetadata,
     PageObservation,
@@ -29,7 +30,7 @@ from .model_gateway.base import (
     mapping_fact_from,
     mapping_field_from,
 )
-from .planner import KIND_FOR_INPUT_TYPE, desired_checked, match_fact
+from .planner import HUMAN_ONLY_PURPOSES, KIND_FOR_INPUT_TYPE, desired_checked, match_fact
 
 # Form input types -> the value_type a derived value should take.
 _DERIVED_VALUE_TYPE = {
@@ -68,6 +69,7 @@ class MappingSource(StrEnum):
     DERIVATION = "derivation"
     MEMORY = "memory"
     MODEL = "model"
+    USER = "user"  # the user said "use this fact for that field": highest trust
 
 
 # Bindings whose field identity came from untrusted page content: not trusted to
@@ -101,13 +103,22 @@ class Mapper(Protocol):
 
 
 def _mappable(field: FormField) -> bool:
+    """Fillable at all: credentials and captchas are the human's (invariant 2).
+    A masked identifier (redacted value, STANDARD purpose) IS mappable."""
     return (
         not field.disabled
         and not field.readonly
         and field.visible
-        and not field.value_redacted
+        and field.purpose not in HUMAN_ONLY_PURPOSES
         and field.input_type in KIND_FOR_INPUT_TYPE
     )
+
+
+def _inferable(field: FormField) -> bool:
+    """May be bound by an INDIRECT signal (autocomplete, memory, the model). A
+    consent/declaration control is not: it is only ever set on the user's
+    explicit say-so — a fact keyed to that very field."""
+    return _mappable(field) and field.purpose is not FieldPurpose.CONSENT
 
 
 def _question(
@@ -173,6 +184,13 @@ def _assign(
     return Assignment(field=field, fact=fact, value=fact.value, checked=None, source=source)
 
 
+def user_binding(field: FormField, fact: DocumentFact) -> Assignment | UserQuestion:
+    """An explicit, user-stated binding ("use aID for Aadhaar Number"): the
+    highest-trust source. Still derives the value through _assign, so an option
+    that does not exist becomes a question, never a guess."""
+    return _assign(field, fact, source=MappingSource.USER)
+
+
 def _assign_with_option(
     field: FormField,
     fact: DocumentFact,
@@ -185,9 +203,7 @@ def _assign_with_option(
     if isinstance(direct, Assignment):
         return direct
     if option_value is not None and field.options is not None and option_value in field.options:
-        return Assignment(
-            field=field, fact=fact, value=option_value, checked=None, source=source
-        )
+        return Assignment(field=field, fact=fact, value=option_value, checked=None, source=source)
     return direct
 
 
@@ -246,7 +262,7 @@ class ModelAssistedMapper:
         unresolved = [
             f
             for f in observation.fields
-            if _mappable(f)
+            if _inferable(f)
             and f.field_id not in outcome.assignments
             and match_fact(f, facts_by_key) is None
         ]
@@ -331,9 +347,7 @@ class ModelAssistedMapper:
             assigned = _assign(field, fact, MappingSource.AUTOCOMPLETE)
             if isinstance(assigned, Assignment):
                 outcome.assignments[field.field_id] = assigned
-                outcome.questions = [
-                    q for q in outcome.questions if q.field_id != field.field_id
-                ]
+                outcome.questions = [q for q in outcome.questions if q.field_id != field.field_id]
             else:
                 still.append(field)
         return still
@@ -362,9 +376,7 @@ class ModelAssistedMapper:
             assigned = _assign(field, fact, MappingSource.MEMORY)
             if isinstance(assigned, Assignment):
                 outcome.assignments[field.field_id] = assigned
-                outcome.questions = [
-                    q for q in outcome.questions if q.field_id != field.field_id
-                ]
+                outcome.questions = [q for q in outcome.questions if q.field_id != field.field_id]
             else:
                 still.append(field)
         return still
@@ -394,21 +406,17 @@ class ModelAssistedMapper:
             form_field = fields_by_id.get(mapping.field_id)
             if form_field is None:
                 continue  # model invented a field: discard
-            if mapping.fact_key is None or mapping.needs_clarification:
+            if mapping.fact_key is None:
                 continue  # deterministic missing-fact question already stands
             fact = facts_by_key.get(mapping.fact_key)
             if fact is None:
                 continue  # model invented a fact: discard
-            if mapping.confidence < MIN_MODEL_CONFIDENCE:
-                outcome.questions.append(
-                    _question(
-                        QuestionKind.LOW_CONFIDENCE,
-                        form_field,
-                        f"Is {form_field.label or form_field.field_id} really "
-                        f"{mapping.fact_key}? (model confidence {mapping.confidence:.2f})",
-                        fact_keys=[mapping.fact_key],
-                    )
-                )
+            if mapping.needs_clarification or mapping.confidence < MIN_MODEL_CONFIDENCE:
+                # A plausible-but-uncertain candidate (an abbreviation or
+                # synonym — "aID" for "Aadhaar Number") is put to the user as a
+                # yes/no, replacing the bare "no fact" question: inferring and
+                # asking beats silently leaving the field.
+                self._propose(outcome, form_field, fact)
                 continue
             assigned = _assign_with_option(form_field, fact, mapping.selected_option_value)
             if isinstance(assigned, Assignment):
@@ -423,6 +431,21 @@ class ModelAssistedMapper:
 
         self._derive_missing(observation, facts_by_key, outcome)
         return outcome
+
+    @staticmethod
+    def _propose(outcome: MappingOutcome, form_field: FormField, fact: DocumentFact) -> None:
+        label = form_field.label or form_field.accessible_name or form_field.field_id
+        shown = fact.value if fact.sensitivity is Sensitivity.PUBLIC else "(value hidden)"
+        outcome.questions = [q for q in outcome.questions if q.field_id != form_field.field_id]
+        outcome.questions.append(
+            _question(
+                QuestionKind.LOW_CONFIDENCE,
+                form_field,
+                f"I didn't find an exact match for '{label}', but you have "
+                f"'{fact.key}' = {shown}. Use it for this field?",
+                fact_keys=[fact.key],
+            )
+        )
 
     def _derive_missing(
         self,

@@ -14,7 +14,7 @@ function field(overrides: Partial<FormField>): FormField {
     },
     input_type: "date", label: "Date of birth", accessible_name: "Date of birth",
     required: true, disabled: false, readonly: false, visible: true, checked: null,
-    current_value: null, value_redacted: false, options: null, option_labels: null, validation_message: null,
+    current_value: null, value_redacted: false, value_length: null, purpose: "standard", options: null, option_labels: null, validation_message: null,
     max_length: null, nearby_text: null,
     ...overrides,
   };
@@ -79,13 +79,27 @@ describe("verifyAction", () => {
     expect(v.failure_class).toBe("element_not_found");
   });
 
-  it("requests user takeover when login or captcha appears", () => {
+  it("requests user takeover when a login gate appears", () => {
     const v = verifyAction(
       setDob("1998-04-17"),
-      observation([field({})], { login_detected: true, captcha_detected: true }),
+      observation([field({})], { login_detected: true, captcha_detected: false }),
     );
     expect(v.status).toBe("NEEDS_USER");
     expect(v.recommended_transition).toBe("ASK_USER");
+  });
+
+  it("a masked identifier verifies by value length, never by value", () => {
+    const masked = field({ value_redacted: true, current_value: null, value_length: 10 });
+    expect(verifyAction(setDob("1998-04-17"), observation([masked])).status).toBe("SUCCESS");
+    const short = field({ value_redacted: true, current_value: null, value_length: 4 });
+    expect(verifyAction(setDob("1998-04-17"), observation([short])).status).toBe("RETRYABLE_FAILURE");
+  });
+
+  it("a captcha on the page does not block filling other fields, only submit/next", () => {
+    const filled = observation([field({ current_value: "1998-04-17" })], { captcha_detected: true });
+    expect(verifyAction(setDob("1998-04-17"), filled).status).toBe("SUCCESS");
+    const submit: BrowserAction = { ...setDob("unused"), kind: "SUBMIT", expected_effect: null };
+    expect(verifyAction(submit, filled).status).toBe("NEEDS_USER");
   });
 
   it("checkbox expectation compares checked state", () => {

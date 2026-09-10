@@ -1,6 +1,6 @@
 # Form Agent — Work Summary
 
-_Last updated: 2026-09-10. Branch `main`; 8 commits ahead of `origin/main` (not yet pushed)._
+_Last updated: 2026-09-10. Branch `main`; 9 commits ahead of `origin/main` (not yet pushed)._
 
 An agentic Chrome extension + local backend that fills web forms from a user
 profile built out of their documents, driven by a chat interface. It never
@@ -23,10 +23,11 @@ submits a form — the human always reviews first.
 | VLM document extraction (layout-agnostic, form-aware) | ✅ Done |
 | Multi-doc merge: dedup, new fields, conflict prompts, new-vs-add | ✅ Done |
 | Close-the-loop: length enforcement + auto-repair of flagged fields | ✅ Done |
+| Field **purpose** perception (credential / captcha / consent / masked ID) + "use it?" mapping questions + `bind` | ✅ Done, verified live on pminternship.mca.gov.in |
 | **Phase 3** — attachment library → auto-upload files into file fields | ⏳ Not started |
 | Broaden Textract fallback recognizer (`extract.py`) | ⏳ Optional (VLM is now primary) |
 
-**Tests:** backend 231 passed · extension 87 passed · contracts no drift.
+**Tests:** backend 247 passed · extension 97 passed · contracts no drift.
 
 ---
 
@@ -68,8 +69,11 @@ Deliberately **not** a monolithic LLM agent driving the browser. It is a
   against the page; holds the backend WebSocket; **persists the session to
   `chrome.storage.session` and reconnects** after Chrome recycles the worker.
 - **Content script** — perceives the DOM/accessibility tree into a typed
-  observation (incl. `maxlength`, `autocomplete`), executes one validated action,
-  verifies against a fresh observation. Never captures credential fields.
+  observation (incl. `maxlength`, `autocomplete`, and each field's **purpose**:
+  credential / captcha / consent / standard, judged from the control's own
+  text), executes one validated action, verifies against a fresh observation.
+  Never captures credential values; a masked identifier (Aadhaar as a
+  password-type input) is fillable but its value never leaves the page.
 
 **Local backend** (`services/agent_backend`, FastAPI on `127.0.0.1:8000`)
 - **WebSocket transport** bridges to the extension.
@@ -162,6 +166,22 @@ Pushed through `a8b518a`; the last six are local.
 - **False "done"** on a value that matched no option (typo "fmale" → `F`):
   report unresolved values honestly with the field's choices.
 - **Length limits**: models miscount characters → clamp deterministically.
+- **pminternship e-KYC (Aadhaar / consent / captcha)** — five generic causes:
+  a masked Aadhaar box (`type=password`) was treated as a login credential, so
+  the fill was abandoned and the field marked "complete on the page"; a text
+  captcha wasn't recognised; a consent checkbox was asked as free text; "aid
+  is aadharid" was read as a VALUE (and the failed edit still corrupted the
+  profile); the mapper never proposed `aID` as a candidate. Fix: **field
+  purpose** in perception (mirrored in the backend for defence in depth at the
+  gate), captcha blocks submit only, consents need an explicit "Tick it", the
+  mapper turns an uncertain candidate into "you have aID — use it?", a new
+  `bind` op / `FA_BIND` for "this fact belongs in that field" (remembered for
+  the site), one-off `set_field` for page-only fields, and `applied` only
+  reports facts that actually landed.
+- **A modal that holds the form** (the site's "Register" dialog) was dismissed
+  as an obstacle → `DialogInfo.contains_form`; the driver never dismisses it.
+- **`aria-describedby` is a description, not an error** (react-select points it
+  at the placeholder) — only counted when the control is `aria-invalid`.
 
 ---
 

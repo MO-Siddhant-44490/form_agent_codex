@@ -13,6 +13,9 @@ import type {
 // made before the options loaded, e.g. "Thane" vs code "476"). Treat the field
 // as satisfied when the selected option's label matches, in either direction.
 function optionValueSatisfied(field: FormField, expected: string): boolean {
+  // A masked identifier never reports its value (it stays on the page); the
+  // strongest check available is that it holds a value of the expected length.
+  if (field.value_redacted) return expected.length > 0 && field.value_length === expected.length;
   const cur = field.current_value;
   if (cur === expected) return true;
   if (cur === null) return false;
@@ -90,10 +93,13 @@ export function verifyAction(
   action: BrowserAction,
   observation: PageObservation,
 ): VerificationResult {
-  // Blocking page states take precedence over field-level checks.
-  if (observation.login_detected || observation.captcha_detected) {
+  // Blocking page states take precedence over field-level checks. A login /
+  // MFA gate blocks everything; a captcha is the human's to solve, so it only
+  // blocks page transitions (submit / next) — other fields can still be filled.
+  const pageTransition = action.kind === "SUBMIT" || action.kind === "NAVIGATE_NEXT";
+  if (observation.login_detected || (observation.captcha_detected && pageTransition)) {
     return verdict(action, "NEEDS_USER", "login_required", "ASK_USER", {
-      notes: observation.captcha_detected ? "captcha present" : "login present",
+      notes: observation.login_detected ? "login present" : "captcha present",
       page_fingerprint: observation.page_fingerprint,
     });
   }
