@@ -466,6 +466,33 @@
       ],
       "title": "TargetDescriptor",
       "type": "object"
+    },
+    "UnrecognizedControl": {
+      "additionalProperties": false,
+      "description": "An interactive element perception can SEE but cannot operate (a role\nwith no executor, or a click-driven element with no role). Reported so the\nagent can say \"I see X but can't fill it\" instead of skipping silently.",
+      "properties": {
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Name"
+        },
+        "role": {
+          "title": "Role",
+          "type": "string"
+        }
+      },
+      "required": [
+        "role"
+      ],
+      "title": "UnrecognizedControl",
+      "type": "object"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -575,6 +602,13 @@
       ],
       "default": null,
       "title": "Title"
+    },
+    "unrecognized_controls": {
+      "items": {
+        "$ref": "#/$defs/UnrecognizedControl"
+      },
+      "title": "Unrecognized Controls",
+      "type": "array"
     },
     "url": {
       "title": "Url",

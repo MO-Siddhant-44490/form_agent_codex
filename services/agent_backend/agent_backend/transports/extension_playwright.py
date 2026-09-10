@@ -69,15 +69,16 @@ class ExtensionPlaywrightTransport:
 
         page = self._context.new_page()
         page.goto(self._fixture_url)
-
+        # The site may redirect or append query parameters; bind to the tab we
+        # actually opened (its final URL), not the URL we asked for.
         state = self._worker.evaluate(
             """async (url) => {
                 const tabs = await chrome.tabs.query({});
-                const tab = tabs.find((t) => t.url === url);
+                const tab = tabs.find((t) => t.url === url) ?? tabs.find((t) => t.active);
                 if (!tab?.id || !tab.url) throw new Error(`no tab for ${url}`);
                 return globalThis.__formAgentTest.attachToTab(tab.id, tab.url);
             }""",
-            self._fixture_url,
+            page.url,
         )
         if not state.get("attached"):
             raise RuntimeError(f"attach failed: {state.get('error')}")

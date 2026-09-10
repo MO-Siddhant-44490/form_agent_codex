@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>ARIA widget form (Google-Forms-shaped)</title>
+<style>
+  body { font-family: sans-serif; max-width: 640px; margin: 2rem auto; }
+  [role=listitem] { margin: 1.2rem 0; }
+  [role=radio], [role=checkbox] { display:inline-block; width:18px; height:18px; border:2px solid #555; border-radius:50%; margin-right:8px; vertical-align:middle; cursor:pointer; }
+  [role=checkbox] { border-radius:3px; }
+  [aria-checked=true] { background:#1a73e8; }
+  [role=listbox] { border:1px solid #888; padding:8px; width:220px; cursor:pointer; }
+  [role=option] { padding:4px 0; }
+  [role=option][hidden] { display:none; }
+</style></head>
+<body>
+<h1>Registration</h1>
+<div role="list">
+  <div role="listitem">
+    <div role="heading" aria-level="3"><span id="q1">Full name</span> <span id="q1r" aria-label="Required question">*</span></div>
+    <input type="text" aria-labelledby="q1 q1r" aria-required="true" autocomplete="off">
+  </div>
+  <div role="listitem">
+    <div role="heading" aria-level="3"><span id="q2">Date of birth</span></div>
+    <input type="date" aria-labelledby="q2" aria-required="true">
+  </div>
+  <div role="listitem">
+    <div role="heading" aria-level="3"><span id="q3">Gender</span></div>
+    <div role="radiogroup" aria-labelledby="q3" aria-required="true">
+      <label><div role="radio" aria-checked="false" aria-label="Male" data-value="Male" tabindex="0"></div>Male</label>
+      <label><div role="radio" aria-checked="false" aria-label="Female" data-value="Female" tabindex="-1"></div>Female</label>
+      <label><div role="radio" aria-checked="false" aria-label="Other" data-value="Other" tabindex="-1"></div>Other</label>
+    </div>
+  </div>
+  <div role="listitem">
+    <div role="heading" aria-level="3"><span id="q4">Marital status</span></div>
+    <div role="listbox" aria-labelledby="q4" tabindex="0" aria-expanded="false">
+      <div role="option" aria-selected="true" data-value="" tabindex="0">Choose</div>
+      <div role="option" aria-selected="false" data-value="Single" hidden>Single</div>
+      <div role="option" aria-selected="false" data-value="Married" hidden>Married</div>
+      <div role="option" aria-selected="false" data-value="Divorced" hidden>Divorced</div>
+    </div>
+  </div>
+  <div role="listitem">
+    <div role="heading" aria-level="3"><span id="q5">Address</span></div>
+    <textarea aria-labelledby="q5" rows="2"></textarea>
+  </div>
+  <div role="listitem">
+    <div role="heading" aria-level="3"><span id="q6">Country</span></div>
+    <input type="text" aria-labelledby="q6">
+  </div>
+</div>
+<button type="button" id="submit">Submit</button>
+<script>
+  // The site's own behaviour: clicks flip ARIA state (as frameworks do).
+  document.querySelectorAll('[role=radio]').forEach(r => r.addEventListener('click', () => {
+    r.closest('[role=radiogroup]').querySelectorAll('[role=radio]').forEach(o => o.setAttribute('aria-checked', 'false'));
+    r.setAttribute('aria-checked', 'true');
+  }));
+  const lb = document.querySelector('[role=listbox]');
+  lb.addEventListener('click', (e) => {
+    const opt = e.target.closest('[role=option]');
+    const open = lb.getAttribute('aria-expanded') === 'true';
+    if (opt && open) {
+      lb.querySelectorAll('[role=option]').forEach(o => { o.setAttribute('aria-selected', String(o === opt)); o.hidden = o !== opt; });
+      lb.setAttribute('aria-expanded', 'false');
+    } else {
+      lb.querySelectorAll('[role=option]').forEach(o => { o.hidden = false; });
+      lb.setAttribute('aria-expanded', 'true');
+    }
+  });
+</script>
+</body></html>

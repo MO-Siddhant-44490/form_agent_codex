@@ -48,6 +48,7 @@ from .observation import (
     PageClassCandidate,
     PageObservation,
     TargetDescriptor,
+    UnrecognizedControl,
 )
 from .redaction import (
     REDACTED,
@@ -117,6 +118,7 @@ __all__ = [  # noqa: RUF022 - grouped by module
     "FactStatus",
     "FactValueType",
     "TargetDescriptor",
+    "UnrecognizedControl",
     "FieldPurpose",
     "FormField",
     "CREDENTIAL_INPUT_TYPES",

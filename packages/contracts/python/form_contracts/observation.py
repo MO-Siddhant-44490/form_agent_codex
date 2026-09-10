@@ -140,6 +140,15 @@ class NavigationControl(StrictModel):
     label: str | None = None
 
 
+class UnrecognizedControl(StrictModel):
+    """An interactive element perception can SEE but cannot operate (a role
+    with no executor, or a click-driven element with no role). Reported so the
+    agent can say "I see X but can't fill it" instead of skipping silently."""
+
+    role: str
+    name: str | None = None
+
+
 class PageObservation(StrictModel):
     run_id: str
     tab_id: int
@@ -160,6 +169,7 @@ class PageObservation(StrictModel):
     login_detected: bool = False
     captcha_detected: bool = False
     dom_stable: bool = True
+    unrecognized_controls: list[UnrecognizedControl] = Field(default_factory=list)
 
     _origin_ok = field_validator("origin")(validate_origin)
 

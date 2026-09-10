@@ -21,7 +21,7 @@ from ..document_intelligence.vlm_extract import supports_vlm, vlm_extract
 from ..driver import EditResult, apply_edits, run_fill
 from ..model_gateway.base import ModelUnavailable
 from ..profile import facts_from_payload, merge_document, upsert_facts
-from ..snapshot import build_snapshot, summarize
+from ..snapshot import build_snapshot, is_filled, summarize, unrecognized
 from .transport_ws import WebSocketBrowserTransport
 
 # -- plumbing ---------------------------------------------------------------
@@ -63,12 +63,83 @@ def st_fields(state: dict | None) -> list[dict]:
     ]
 
 
+def _trace(st, run_id: str, kind: str, observation, **parts) -> None:
+    """Persist what a fill/edit SAW and DID, so a 'why didn't it fill X?' is
+    answerable from the run log (GET /runs/{id}/events) instead of guesswork.
+    Value-free: field identities, purposes, outcomes — never the values."""
+    fields = (
+        [
+            {
+                "field_id": f.field_id,
+                "type": f.input_type,
+                "label": f.label or f.accessible_name,
+                "purpose": f.purpose.value,
+                "required": f.required,
+                "filled": is_filled(f),
+            }
+            for f in observation.fields
+        ]
+        if observation is not None
+        else []
+    )
+    st.repo.append_event(
+        run_id,
+        kind,
+        {
+            "fields": fields,
+            "unrecognized": [u.model_dump() for u in observation.unrecognized_controls]
+            if observation is not None
+            else [],
+            **parts,
+        },
+    )
+
+
+def _drive_trace(result) -> dict:
+    return {
+        "outcome": result.outcome.value,
+        "detail": result.detail,
+        "filled": result.filled_fields,
+        "questions": [
+            {"field_id": q.field_id, "kind": q.kind.value, "fact_keys": list(q.fact_keys)}
+            for q in result.questions
+        ],
+        "verifications": [
+            {
+                "status": v.status.value,
+                "failure_class": v.failure_class.value if v.failure_class else None,
+                "notes": v.evidence.notes,
+            }
+            for v in result.verifications
+        ],
+        "recovery": [
+            {"field_id": d.field_id, "strategy": d.strategy.value}
+            for d in result.recovery_decisions
+        ],
+        "policy_blocks": [
+            {"rule": d.rule.value if d.rule else None, "detail": d.detail}
+            for d in result.policy_decisions
+            if d.decision.value == "BLOCK"
+        ],
+        "model_calls": len(result.model_calls),
+        "steps": result.steps_used,
+    }
+
+
+def _observe_quietly(transport):
+    try:
+        return transport.observe()
+    except Exception:  # noqa: BLE001 — tracing must never fail an operation
+        return None
+
+
 def _reperceive(st, transport, run_id) -> dict | None:
     """Snapshot the form as it now stands and summarize the delta since the last
     turn. Best-effort; never fails the caller."""
     try:
-        snapshot = build_snapshot(transport.observe())
-        state = summarize(snapshot, st.form_state.get(run_id))
+        observation = transport.observe()
+        snapshot = build_snapshot(observation)
+        state = summarize(snapshot, st.form_state.get(run_id), unrecognized(observation))
         st.form_state[run_id] = snapshot
         return state
     except Exception:  # noqa: BLE001 — perception is best-effort
@@ -162,6 +233,8 @@ def start_fill(st, session, loop, fact_items: list[dict], send) -> None:
             transport, facts_from_payload(fact_items), mapper=st.mapper, memory=st.memory
         )
         auto_repair(st, transport, session, fact_items)
+        observation = _observe_quietly(transport)
+        _trace(st, session.run_id, "fill_trace", observation, **_drive_trace(result))
         return {
             "type": "fill_result",
             **_fill_payload(result, _reperceive(st, transport, session.run_id)),
@@ -224,6 +297,18 @@ def _edit(st, transport, session, plan_reply: str, fact_items, keys, bindings=No
     )
     repaired, _ = auto_repair(st, transport, session, fact_items)
     reply, questions = _edit_reply(plan_reply, edit, repaired)
+    _trace(
+        st,
+        session.run_id,
+        "edit_trace",
+        _observe_quietly(transport),
+        keys=sorted(keys),
+        bindings=bindings or {},
+        filled=edit.filled_fields,
+        failed=edit.failed_fields,
+        unresolved=[u["key"] for u in edit.unresolved],
+        repaired=repaired,
+    )
     return {
         "reply": reply,
         "outcome": "EDITED",

@@ -1,6 +1,6 @@
 # Form Agent — Work Summary
 
-_Last updated: 2026-09-10. Branch `main`; 9 commits ahead of `origin/main` (not yet pushed)._
+_Last updated: 2026-09-10. Branch `main`; 10 commits ahead of `origin/main` (not yet pushed)._
 
 An agentic Chrome extension + local backend that fills web forms from a user
 profile built out of their documents, driven by a chat interface. It never
@@ -24,10 +24,11 @@ submits a form — the human always reviews first.
 | Multi-doc merge: dedup, new fields, conflict prompts, new-vs-add | ✅ Done |
 | Close-the-loop: length enforcement + auto-repair of flagged fields | ✅ Done |
 | Field **purpose** perception (credential / captcha / consent / masked ID) + "use it?" mapping questions + `bind` | ✅ Done, verified live on pminternship.mca.gov.in |
+| **Role-based perception** (ARIA radio/checkbox/switch/listbox/textbox widgets) + role-generic execution + "can see but can't operate" report + per-fill trace | ✅ Done, verified in Chromium on a Google-Forms-shaped fixture |
 | **Phase 3** — attachment library → auto-upload files into file fields | ⏳ Not started |
 | Broaden Textract fallback recognizer (`extract.py`) | ⏳ Optional (VLM is now primary) |
 
-**Tests:** backend 247 passed · extension 97 passed · contracts no drift.
+**Tests:** backend 247 passed (+10 browser integration) · extension 101 passed · contracts no drift.
 
 ---
 
@@ -178,6 +179,18 @@ Pushed through `a8b518a`; the last six are local.
   `bind` op / `FA_BIND` for "this fact belongs in that field" (remembered for
   the site), one-off `set_field` for page-only fields, and `applied` only
   reports facts that actually landed.
+- **Google Forms: choice questions silently skipped, "random" order.** Its
+  radios, checkboxes and dropdowns are `div`s with ARIA roles; perception only
+  knew native inputs and a closed list of widgets — an allowlist that always
+  has a next hole. Replaced with **role-based perception** (`perception/aria.ts`:
+  any `role=radiogroup/radio/checkbox/switch/listbox/option/textbox` or
+  contenteditable is a field, state from `aria-checked/selected/required`),
+  **role-generic execution** (click / open-and-pick / type), fields ordered
+  by DOM position so the fill runs top to bottom, an `unrecognized_controls`
+  report ("I can see X but can't operate it") instead of silent skipping, and
+  a value-free **`fill_trace` / `edit_trace`** event per operation so the run
+  log answers "why didn't it fill X?". Residual: sites with no roles at all →
+  the planned visual (screenshot→VLM) fallback.
 - **A modal that holds the form** (the site's "Register" dialog) was dismissed
   as an obstacle → `DialogInfo.contains_form`; the driver never dismisses it.
 - **`aria-describedby` is a description, not an error** (react-select points it
@@ -215,6 +228,9 @@ for Node downloads; `AWS_CA_BUNDLE` if boto3 hits SSL errors); `pnpm` at `~/.loc
 
 ## 7. Known limits / next steps
 
+- **Perception is role-based, not visual.** A site whose widgets expose no
+  ARIA role at all (bare click-driven divs) is still invisible; those are the
+  case for the visual fallback (screenshot → VLM grounding) reserved in the plan.
 - **Auto-repair needs a detectable error** — one the page surfaces (error text,
   `aria-invalid`, `maxlength`). Rules enforced only on submit are invisible to it;
   a stated instruction ("under 50 characters") covers those.

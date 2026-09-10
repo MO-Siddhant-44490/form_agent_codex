@@ -3,6 +3,7 @@
 // credential-like inputs (invariant 2).
 import type { FormField, TargetDescriptor } from "@form-agent/contracts";
 import { accessibleName, computedRole, explicitLabel, groupLegend } from "./labels";
+import { detectAriaWidgets } from "./aria";
 import { classifyPurpose, type FieldPurpose } from "./purpose";
 import { deepQueryAll } from "./shadow";
 import { detectComboboxes, detectDatePickers } from "./widgets";
@@ -122,7 +123,7 @@ function baseField(el: Control, fieldId: string): FormField {
     input_type: inputType(el),
     label: explicitLabel(el),
     accessible_name: accessibleName(el),
-    required: el.required,
+    required: el.required || el.getAttribute("aria-required") === "true",
     disabled: el.disabled,
     readonly: "readOnly" in el ? el.readOnly : false,
     visible: true,
@@ -194,10 +195,18 @@ const NON_FIELD_INPUT_TYPES = new Set(["submit", "button", "reset", "image"]);
 
 /** Discover all actionable form fields, in document order. Hidden elements
  * (including honeypots) are excluded entirely. Radio inputs sharing a name
- * collapse into one radiogroup field. */
+ * collapse into one radiogroup field. Native controls and role-based (ARIA)
+ * widgets are interleaved in DOM order, so the fill proceeds top to bottom. */
 export function discoverFields(doc: Document): FormField[] {
+  return discoverFieldsWithReport(doc).fields;
+}
+
+export function discoverFieldsWithReport(doc: Document): {
+  fields: FormField[];
+  unrecognized: ReturnType<typeof detectAriaWidgets>["unrecognized"];
+} {
   const controls = deepQueryAll<Control>(doc, "input, select, textarea");
-  const fields: FormField[] = [];
+  const entries: { el: Element; field: FormField }[] = [];
   const seenRadioGroups = new Set<string>();
 
   controls.forEach((el, index) => {
@@ -214,16 +223,24 @@ export function discoverFields(doc: Document): FormField[] {
           c.name === el.name &&
           isVisible(c),
       );
-      fields.push(radioGroupField(group, el.name));
+      entries.push({ el, field: radioGroupField(group, el.name) });
       return;
     }
 
-    fields.push(baseField(el, fieldIdFor(el, index)));
+    entries.push({ el, field: baseField(el, fieldIdFor(el, index)) });
   });
+
+  const aria = detectAriaWidgets(doc);
+  for (const w of aria.widgets) entries.push({ el: w.el, field: w.field });
+  // Document order across light DOM and open shadow roots (the same traversal
+  // deepQueryAll uses), so the fill proceeds top to bottom.
+  const order = new Map(deepQueryAll<Element>(doc, "*").map((el, i) => [el, i] as const));
+  entries.sort((a, b) => (order.get(a.el) ?? 0) - (order.get(b.el) ?? 0));
+  const fields = entries.map((e) => e.field);
 
   mergeComboboxes(doc, fields);
   mergeDatePickers(doc, fields);
-  return fields;
+  return { fields, unrecognized: aria.unrecognized };
 }
 
 // Enrich discovered fields (or add new ones) for ARIA comboboxes so the

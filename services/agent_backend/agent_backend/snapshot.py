@@ -50,6 +50,11 @@ def _display_value(field: FormField) -> str | None:
     return field.current_value
 
 
+def unrecognized(observation: PageObservation) -> list[dict]:
+    """Controls perception can see but not operate — reported, never skipped silently."""
+    return [{"role": u.role, "name": u.name} for u in observation.unrecognized_controls]
+
+
 def build_snapshot(observation: PageObservation) -> list[dict]:
     """A value-aware, JSON-friendly view of every actionable field."""
     fields: list[dict] = []
@@ -78,10 +83,14 @@ def build_snapshot(observation: PageObservation) -> list[dict]:
     return fields
 
 
-def summarize(snapshot: list[dict], previous: list[dict] | None = None) -> dict:
+def summarize(
+    snapshot: list[dict],
+    previous: list[dict] | None = None,
+    cannot_operate: list[dict] | None = None,
+) -> dict:
     """A delta-aware summary the panel shows and the interpreter reasons over:
-    counts, fields that just appeared, fields still needing a value, and site
-    validation errors."""
+    counts, fields that just appeared, fields still needing a value, site
+    validation errors, and controls that were seen but cannot be operated."""
     prev_ids = {f["field_id"] for f in previous} if previous else set()
     new_fields = [f for f in snapshot if previous is not None and f["field_id"] not in prev_ids]
     empty_required = [f for f in snapshot if f["required"] and not f["filled"]]
@@ -100,6 +109,12 @@ def summarize(snapshot: list[dict], previous: list[dict] | None = None) -> dict:
         parts.append("Needs your decision: " + ", ".join(f["label"] for f in consents) + ".")
     if yours:
         parts.append("Yours to complete on the page: " + ", ".join(f["label"] for f in yours) + ".")
+    if cannot_operate:
+        parts.append(
+            "I can see but can't operate: "
+            + ", ".join(f"{c.get('name') or '?'} ({c['role']})" for c in cannot_operate)
+            + " — please set these yourself."
+        )
     if errors:
         parts.append("Issues: " + "; ".join(f"{f['label']} — {f['error']}" for f in errors) + ".")
     return {
@@ -107,4 +122,5 @@ def summarize(snapshot: list[dict], previous: list[dict] | None = None) -> dict:
         "new_fields": new_fields,
         "empty_required": empty_required,
         "errors": errors,
+        "cannot_operate": cannot_operate or [],
     }

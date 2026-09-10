@@ -2,7 +2,7 @@
 // fingerprinting (plan.md §8.2). Read-only; never mutates the page.
 import type { FormField, PageObservation } from "@form-agent/contracts";
 import { detectDialogs } from "./dialogs";
-import { discoverFields } from "./fields";
+import { discoverFields, discoverFieldsWithReport } from "./fields";
 import { summarizeNavigation } from "./navigation";
 
 const CAPTCHA_SELECTORS = [
@@ -71,7 +71,7 @@ export async function buildObservation(
 ): Promise<PageObservation> {
   const win = doc.defaultView;
   if (!win) throw new Error("document has no window");
-  const fields = discoverFields(doc);
+  const { fields, unrecognized } = discoverFieldsWithReport(doc);
   const loginDetected = detectLogin(doc, fields);
   const captchaDetected = detectCaptcha(doc, fields);
 
@@ -103,5 +103,6 @@ export async function buildObservation(
     login_detected: loginDetected,
     captcha_detected: captchaDetected,
     dom_stable: ctx.domStable,
+    unrecognized_controls: unrecognized,
   };
 }

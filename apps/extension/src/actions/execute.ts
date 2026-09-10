@@ -9,6 +9,7 @@ import {
   findMonthNav,
   shownMonth,
 } from "../perception/widgets";
+import { optionValueOf } from "../perception/aria";
 import { deepQueryAll } from "../perception/shadow";
 import { isVisible } from "../perception/visibility";
 import { elWindow, isFormControl, isInputEl, isSelectEl } from "./dom-types";
@@ -71,8 +72,13 @@ async function executeTargeted(doc: Document, action: BrowserAction): Promise<Ac
   if (!action.target) return failed(action, "action has no target");
 
   // Custom ARIA combobox: open the popup and click the matching option,
-  // rather than treating it as a native <select>.
-  if (action.kind === "SELECT_OPTION" && action.target.input_type === "combobox") {
+  // rather than treating it as a native <select>. (A role="listbox" select is
+  // a role-based widget, handled below by role.)
+  if (
+    action.kind === "SELECT_OPTION" &&
+    action.target.input_type === "combobox" &&
+    action.target.role !== "listbox"
+  ) {
     return await executeCombobox(doc, action);
   }
   // Custom calendar date picker: open it and click the matching day cell.
@@ -82,6 +88,7 @@ async function executeTargeted(doc: Document, action: BrowserAction): Promise<Ac
 
   const resolved = resolveTarget(doc, action.target);
   if (resolved.kind === "not-found") return failed(action, resolved.detail);
+  if (resolved.kind === "aria-widget") return await executeAriaWidget(doc, action, resolved);
 
   const value = action.resolved_value;
 
@@ -263,6 +270,82 @@ async function clickSelect2Option(
     doc.dispatchEvent(new win.MouseEvent("mouseup", { bubbles: true, cancelable: true }));
   }
   return result(action, "EXECUTED");
+}
+
+// -- role-based widgets ------------------------------------------------------
+// Execution by ROLE: a checkbox/switch/radio is clicked; a listbox is opened
+// and its option clicked; a textbox gets its text set. The same code drives any
+// site that exposes roles, whatever framework built the widget.
+
+const norm = (s: string): string => s.trim().toLowerCase();
+
+function matchMember(members: HTMLElement[], value: string): HTMLElement | undefined {
+  return (
+    members.find((m) => optionValueOf(m) === value) ??
+    members.find((m) => norm(optionValueOf(m)) === norm(value)) ??
+    members.find((m) => norm(m.getAttribute("aria-label") ?? m.textContent ?? "") === norm(value))
+  );
+}
+
+function realClick(el: HTMLElement): void {
+  const win = elWindow(el);
+  el.scrollIntoView?.({ block: "center" });
+  for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
+    const Ctor = type.startsWith("pointer") && "PointerEvent" in win ? win.PointerEvent : win.MouseEvent;
+    el.dispatchEvent(new Ctor(type, { bubbles: true, cancelable: true, composed: true }));
+  }
+}
+
+async function executeAriaWidget(
+  doc: Document,
+  action: BrowserAction,
+  resolved: Extract<Resolved, { kind: "aria-widget" }>,
+): Promise<ActionResult> {
+  const { role, element, members } = resolved;
+  const value = action.resolved_value;
+
+  if (role === "radiogroup") {
+    if (value === null || value === undefined) return failed(action, "no resolved value");
+    const match = matchMember(members, value);
+    if (!match) return failed(action, `no radio for ${value}`, "option_not_found");
+    if (match.getAttribute("aria-checked") !== "true") realClick(match);
+    return result(action, "EXECUTED");
+  }
+
+  if (role === "checkbox" || role === "switch") {
+    const desired = action.expected_effect?.checked;
+    if (desired === null || desired === undefined) return failed(action, "no desired checked state");
+    if ((element.getAttribute("aria-checked") === "true") !== desired) realClick(element);
+    return result(action, "EXECUTED");
+  }
+
+  if (role === "listbox") {
+    if (value === null || value === undefined) return failed(action, "no resolved value");
+    // Open the list (the options may be rendered/visible only after that),
+    // then click the matching option; re-query in case the site re-renders.
+    realClick(element);
+    await new Promise((r) => setTimeout(r, 150));
+    const options = [...members, ...deepQueryAll<HTMLElement>(doc, "[role='option']")].filter(
+      (o, i, all) => all.indexOf(o) === i,
+    );
+    const match = matchMember(options, value);
+    if (!match) return failed(action, `no option for ${value}`, "option_not_found");
+    realClick(match);
+    return result(action, "EXECUTED");
+  }
+
+  if (role === "textbox") {
+    if (value === null || value === undefined) return failed(action, "no resolved value");
+    const win = elWindow(element);
+    element.focus();
+    element.textContent = value;
+    element.dispatchEvent(new win.InputEvent("input", { bubbles: true, data: value, inputType: "insertText" }));
+    element.dispatchEvent(new win.Event("change", { bubbles: true }));
+    element.dispatchEvent(new win.FocusEvent("blur", { bubbles: true }));
+    return result(action, "EXECUTED");
+  }
+
+  return failed(action, `no executor for role ${role}`);
 }
 
 async function executeCombobox(doc: Document, action: BrowserAction): Promise<ActionResult> {

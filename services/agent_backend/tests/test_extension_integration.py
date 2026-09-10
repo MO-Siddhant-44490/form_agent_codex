@@ -397,3 +397,71 @@ def test_shadow_mode_proposes_without_touching_the_page(fixture_server):
         assert card.mapping_accuracy == 1.0
     finally:
         transport.close()
+
+
+def test_role_based_widgets_fill_in_document_order_via_extension(fixture_server):
+    """A Google-Forms-shaped page: div radios, a div listbox, aria-required,
+    aria-labelledby headings. Perceived by ROLE, executed by role, verified from
+    the fresh observation — in document order, no site-specific code."""
+    from agent_backend.mapper import ModelAssistedMapper
+    from agent_backend.model_gateway.fake import FakeModelAdapter
+    from form_contracts import DocumentFact, FactStatus, FactValueType, Sensitivity
+
+    def fact(key, value, vt=FactValueType.STRING):
+        return DocumentFact(
+            fact_id=f"f-{key}",
+            key=key,
+            value=value,
+            value_type=vt,
+            confidence=1.0,
+            sensitivity=Sensitivity.PUBLIC,
+            status=FactStatus.USER_PROVIDED,
+        )
+
+    facts = [
+        fact("full_name", "Ananya Prakash Iyer"),
+        fact("date_of_birth", "1988-09-23", FactValueType.DATE),
+        fact("gender", "Female"),
+        fact("marital_status", "Divorced"),
+        fact("address", "No. 42, Second Cross Street, Adyar, Chennai 600020"),
+        fact("country", "India"),
+    ]
+    assert EXTENSION_DIST.exists(), "build the extension first"
+    transport = ExtensionPlaywrightTransport(
+        EXTENSION_DIST, f"http://127.0.0.1:{FIXTURE_PORT}/aria-form/"
+    )
+    try:
+        result = run_fill(transport, facts, mapper=ModelAssistedMapper(FakeModelAdapter()))
+        assert result.outcome is RunOutcome.COMPLETED, (result.detail, result.questions)
+        # Filled top to bottom: the ARIA widgets sit between native inputs.
+        labels = [
+            f.label or f.accessible_name
+            for f in transport.observe().fields
+            if f.field_id in result.filled_fields
+        ]
+        assert labels == [
+            "Full name *",
+            "Date of birth",
+            "Gender",
+            "Marital status",
+            "Address",
+            "Country",
+        ]
+        dom = transport.page_eval(
+            """() => ({
+                name: document.querySelector('input[type=text]').value,
+                dob: document.querySelector('input[type=date]').value,
+                gender: document.querySelector('[role=radio][aria-checked=true]')?.dataset.value,
+                marital: document.querySelector('[role=option][aria-selected=true]')?.dataset.value,
+                address: document.querySelector('textarea').value,
+            })"""
+        )
+        assert dom == {
+            "name": "Ananya Prakash Iyer",
+            "dob": "1988-09-23",
+            "gender": "Female",
+            "marital": "Divorced",
+            "address": "No. 42, Second Cross Street, Adyar, Chennai 600020",
+        }
+    finally:
+        transport.close()

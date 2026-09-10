@@ -16,6 +16,9 @@ _LABEL_HINTS: dict[str, tuple[str, ...]] = {
     "years_experience": ("experience", "years"),
     "contact_method": ("contact method", "preferred contact"),
     "subscribe": ("subscribe", "newsletter"),
+    "gender": ("gender", "sex"),
+    "marital_status": ("marital",),
+    "address": ("address",),
 }
 
 
