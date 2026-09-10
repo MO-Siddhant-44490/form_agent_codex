@@ -179,6 +179,61 @@ def fallback_interpret(text: str) -> ChatPlan:
     )
 
 
+def parse_char_limit(text: str) -> int | None:
+    """A character limit stated in a request, e.g. 'under 50 characters'."""
+    m = re.search(r"(\d{1,4})\s*(?:char|character|letter)s?", text, re.I)
+    return int(m.group(1)) if m else None
+
+
+def clamp_length(value: str, n: int) -> str:
+    """Truncate a value to at most n characters, backing off to a word/comma
+    boundary when one is reasonably close, so it fits without cutting mid-word."""
+    if n <= 0 or len(value) <= n:
+        return value
+    cut = value[:n]
+    boundary = max(cut.rfind(" "), cut.rfind(","))
+    if boundary >= int(n * 0.6):
+        cut = cut[:boundary]
+    return cut.rstrip(" ,")
+
+
+REPAIR_SYSTEM = """You fix form fields that a website flagged after they were
+filled. For each field you get its key, label, the value entered, and the site's
+error/warning (and a max length when known). Produce a corrected value that will
+satisfy the error — shorten an over-long value with standard abbreviations to fit
+the limit, reformat a date/phone/email, or fix a pattern. Keep the person's data
+faithful; never invent new information; never output a password/OTP/CAPTCHA/card.
+Return ONLY JSON: {"corrections": {"<key>": "<corrected value>"}}. Omit a key you
+cannot fix."""
+
+
+def repair_values(gateway, issues: list[dict]) -> dict[str, str]:
+    """Ask the model for corrected values for flagged fields. Best-effort; returns
+    {} if the model is unavailable or the output is unusable."""
+    if not (gateway is not None and hasattr(gateway, "chat_json")) or not issues:
+        return {}
+    lines = []
+    for i in issues:
+        cap = f" (max {i['max_length']} chars)" if i.get("max_length") else ""
+        lines.append(
+            f'- key="{i["key"]}" label="{i["label"]}" value={i.get("value")!r} '
+            f'problem={i.get("error")!r}{cap}'
+        )
+    user = "Fields to fix:\n" + "\n".join(lines) + "\n\nReturn the JSON."
+    try:
+        data = json.loads(extract_json(gateway.chat_json(REPAIR_SYSTEM, user)))
+    except (ModelUnavailable, json.JSONDecodeError, ValueError, KeyError, AttributeError):
+        return {}
+    corrections = data.get("corrections", {})
+    if not isinstance(corrections, dict):
+        return {}
+    return {
+        str(k): str(v)
+        for k, v in corrections.items()
+        if v and not _is_credential_key(str(k))
+    }
+
+
 def interpret_or_fallback(
     gateway,
     text: str,

@@ -31,8 +31,10 @@ Return ONLY a JSON object: {"facts": [{"key": <snake_case field name>, "value":
 <string>}]}.
 
 Rules:
-- Include a field ONLY if its value is clearly present in the document. Never
-  invent or guess a value; omit anything uncertain.
+- Include a field ONLY if its value is clearly present in the document, OR can
+  be inferred with high confidence from unambiguous evidence (e.g. country =
+  "India" from nationality "Indian"; state from a well-known city). Never guess
+  beyond such clear inferences; omit anything uncertain.
 - Prefer these standard keys when the information is present: full_name,
   first_name, last_name, gender, date_of_birth, email, mobile, phone, address,
   sub_locality, locality, city, district, state, country, pincode, nationality,

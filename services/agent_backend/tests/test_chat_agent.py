@@ -1,11 +1,41 @@
 """Reasoning chat interpreter: plan parsing, credential safety, fallback."""
 
 from agent_backend.chat_agent import (
+    clamp_length,
     fallback_interpret,
     interpret_or_fallback,
+    parse_char_limit,
     parse_plan,
+    repair_values,
 )
 from agent_backend.model_gateway.fake import FakeModelAdapter
+
+
+def test_parse_char_limit():
+    assert parse_char_limit("shorten the address to under 50 characters") == 50
+    assert parse_char_limit("keep it to 30 chars") == 30
+    assert parse_char_limit("make it shorter please") is None
+
+
+def test_clamp_length_backs_off_to_a_word_boundary():
+    v = "Flat 1204 Sunbeam Hts, Plot 27, Palm Beach Road, Navi Mumbai"
+    out = clamp_length(v, 40)
+    assert len(out) <= 40
+    assert not out.endswith(",")
+    assert out == "Flat 1204 Sunbeam Hts, Plot 27, Palm"  # cut at the last word boundary
+    assert clamp_length("short", 40) == "short"  # already fits
+
+
+def test_repair_values_reads_corrections_and_drops_credentials():
+    gw = FakeModelAdapter()
+    gw.chat_response = '{"corrections": {"address": "Flat 1204, Palm Beach Rd", "password": "x"}}'
+    out = repair_values(gw, [{"key": "address", "label": "Address", "value": "long...", "error": "too long"}])
+    assert out == {"address": "Flat 1204, Palm Beach Rd"}
+
+
+def test_repair_values_empty_without_gateway_or_issues():
+    assert repair_values(None, [{"key": "a"}]) == {}
+    assert repair_values(FakeModelAdapter(), []) == {}
 
 
 def test_parse_plan_reads_reply_and_ops():

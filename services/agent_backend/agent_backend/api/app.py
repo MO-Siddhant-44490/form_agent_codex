@@ -10,7 +10,12 @@ from dataclasses import dataclass, field
 from fastapi import Depends, FastAPI, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
 from form_contracts import DocumentFact, FactStatus, FactValueType, Sensitivity, redacted_fact_repr
 
-from ..chat_agent import interpret_or_fallback
+from ..chat_agent import (
+    clamp_length,
+    interpret_or_fallback,
+    parse_char_limit,
+    repair_values,
+)
 from ..document_intelligence.extract import extract_facts
 from ..document_intelligence.fact_store import FactStore
 from ..document_intelligence.parser_factory import build_parser_from_env
@@ -126,6 +131,51 @@ def _merge_facts(fact_items: list[dict], updates: list[dict]) -> list[dict]:
     return list(by_key.values())
 
 
+def _auto_repair(st, transport, session, fact_items, gateway, rounds=2):
+    """Close the loop after a fill/edit: find fields the site is now flagging
+    (a validation error/warning) and try to fix them — shorten an over-long
+    value, reformat — instead of leaving them for the user. Bounded; each fix
+    goes through the same gated apply_edits. Returns (fixed_keys, fact_items)."""
+    fixed: list[str] = []
+    for _ in range(rounds):
+        try:
+            observation = transport.observe()
+        except Exception:
+            break
+        errored = [s for s in build_snapshot(observation) if s.get("error") and s.get("value")]
+        if not errored:
+            break
+        facts_by_key = {f.key: f for f in _facts_from_payload(fact_items)}
+        mapping = st.mapper.map(observation, facts_by_key)
+        issues = []
+        for s in errored:
+            assignment = mapping.assignments.get(s["field_id"])
+            if assignment is not None:
+                issues.append(
+                    {
+                        "key": assignment.fact.key,
+                        "label": s["label"],
+                        "value": s["value"],
+                        "error": s["error"],
+                        "max_length": s.get("max_length"),
+                    }
+                )
+        corrections = repair_values(gateway, issues)
+        for issue in issues:
+            cap = issue.get("max_length")
+            if issue["key"] in corrections and cap:
+                corrections[issue["key"]] = clamp_length(corrections[issue["key"]], cap)
+        corrections = {k: v for k, v in corrections.items() if v}
+        if not corrections:
+            break
+        fact_items = _merge_facts(
+            fact_items, [{"key": k, "value": v} for k, v in corrections.items()]
+        )
+        apply_edits(transport, _facts_from_payload(fact_items), set(corrections), mapper=st.mapper)
+        fixed.extend(corrections)
+    return fixed, fact_items
+
+
 def _start_fill(st, session, loop, fact_items, send) -> None:
     """Drive a fill in the connected tab (in a worker thread, since run_fill is
     sync) and stream the result back to the panel. Never submits."""
@@ -135,6 +185,7 @@ def _start_fill(st, session, loop, fact_items, send) -> None:
         transport = WebSocketBrowserTransport(session, loop)
         try:
             result = run_fill(transport, facts, mapper=st.mapper, memory=st.memory)
+            _auto_repair(st, transport, session, fact_items, getattr(st.mapper, "_gateway", None))
             state = _reperceive(st, transport, session.run_id)
             payload = {"type": "fill_result", **_fill_payload(result, state)}
         except Exception as error:  # surface failures to the panel
@@ -242,6 +293,14 @@ def _chat(st, session, loop, text, fact_items, send, history=None) -> None:
             gateway = getattr(st.mapper, "_gateway", None)
             plan = interpret_or_fallback(gateway, text, snapshot, fact_items, history or [])
             updates = plan.fact_updates()
+            # Honor a character limit the user stated ("under 50 characters"):
+            # enforce it deterministically so a value the model left too long
+            # still fits (models miscount characters).
+            limit = parse_char_limit(text)
+            if limit is not None and updates:
+                updates = [
+                    {"key": u["key"], "value": clamp_length(u["value"], limit)} for u in updates
+                ]
             payload = {"type": "chat_result", "reply": plan.reply, "applied": updates}
             if updates:
                 # Targeted edit: change only the affected field(s), not the whole
@@ -253,6 +312,8 @@ def _chat(st, session, loop, text, fact_items, send, history=None) -> None:
                     {u["key"] for u in updates},
                     mapper=st.mapper,
                 )
+                # Close the loop: if the site now flags any field, try to fix it.
+                repaired, merged = _auto_repair(st, transport, session, merged, gateway)
                 # Report the ACTUAL outcome, not the interpreter's optimistic
                 # reply: if a value didn't map/match, say so (with the choices).
                 questions = []
@@ -273,6 +334,12 @@ def _chat(st, session, loop, text, fact_items, send, history=None) -> None:
                     for fid in edit.failed_fields:
                         say.append(f"I couldn't fill {fid}.")
                     payload["reply"] = " ".join(say) + " What should I use?"
+                if repaired:
+                    adjusted = ", ".join(sorted(set(repaired)))
+                    payload["reply"] = (
+                        payload.get("reply", plan.reply)
+                        + f" I also adjusted {adjusted} so the form accepts it."
+                    )
                 payload.update(
                     {
                         "outcome": "EDITED",
