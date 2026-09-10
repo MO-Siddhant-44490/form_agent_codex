@@ -1,6 +1,6 @@
 # Form Agent — Work Summary
 
-_Last updated: 2026-09-10. Branch `main`; 6 commits ahead of `origin/main` (not yet pushed)._
+_Last updated: 2026-09-10. Branch `main`; 7 commits ahead of `origin/main` (not yet pushed)._
 
 An agentic Chrome extension + local backend that fills web forms from a user
 profile built out of their documents, driven by a chat interface. It never
@@ -37,9 +37,17 @@ Deliberately **not** a monolithic LLM agent driving the browser. It is a
 
 ### The LLM
 - **Provider:** AWS Bedrock (Converse API), SSO profile `dev`, region `ap-south-1`.
-- **Model:** Claude 3.7 Sonnet — `apac.anthropic.claude-3-7-sonnet-20250219-v1:0`
-  (set via `BEDROCK_MODEL_ID`; code default is Sonnet 4). It is **multimodal**,
-  which the document extractor relies on.
+- **Model:** Claude Sonnet 4 — `apac.anthropic.claude-sonnet-4-20250514-v1:0`
+  (the code default; override with `BEDROCK_MODEL_ID`). It is **multimodal**,
+  which the document extractor relies on. Upgraded from 3.7 Sonnet on 2026-09-10
+  after a live pgportal smoke (11 fields, cascade selected, 2 model calls).
+- **Why not newer?** The `dev` account is an AWS *channel program* (reseller)
+  account; Bedrock rejects Sonnet 4.5/4.6/5, Haiku 4.5, Opus and Fable with
+  "Access to this model is not available for channel program accounts". Unlocking
+  them goes through the AWS distributor, not code. Once granted, switch by
+  setting `BEDROCK_MODEL_ID` (e.g. `global.anthropic.claude-sonnet-5`) — the
+  Converse API and document/image content blocks are unchanged. List what the
+  account can see with `python -m agent_backend.model_gateway.list_models`.
 - **Used only at these bounded points** — everything else is deterministic code,
   and each point degrades gracefully if Bedrock is unavailable:
   1. **Field → fact mapping** (when deterministic signals don't resolve a field)
@@ -164,9 +172,9 @@ aws sso login --profile dev
 # 2. Backend (from the repo root, so durable memory lands in ./_agent_state)
 export PATH="$HOME/.local/bin:$PATH"
 export AWS_PROFILE=dev AWS_REGION=ap-south-1
-export BEDROCK_MODEL_ID=apac.anthropic.claude-3-7-sonnet-20250219-v1:0
+# (optional) export BEDROCK_MODEL_ID=...   # default is Claude Sonnet 4 (apac profile)
 uv run --package agent-backend --extra server python -m agent_backend.api.server
-# → serves http://127.0.0.1:8000 ; prints "model provider: ModelAssistedMapper (...)"
+# → serves http://127.0.0.1:8000 ; prints "model provider: ModelAssistedMapper (<model id>)"
 
 # 3. Extension — `build:dev` widens dist/manifest.json to <all_urls> so you can
 #    try it on any site (the committed manifest stays localhost-only)
