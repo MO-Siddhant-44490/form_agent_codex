@@ -43,9 +43,14 @@ class FakeModelAdapter:
 
     # Tests may set a canned chat plan (raw JSON string) the interpreter parses.
     chat_response: str = '{"reply": "ok", "ops": []}'
+    # Tests may set a canned VLM extraction (raw JSON string).
+    extract_response: str = '{"facts": []}'
 
     def chat_json(self, system: str, user: str) -> str:
         return self.chat_response
+
+    def extract_document(self, system: str, prompt: str, doc_bytes: bytes, mime: str) -> str:
+        return self.extract_response
 
     def map_fields(self, request: MappingRequest) -> GatewayResult:
         start = time.monotonic()

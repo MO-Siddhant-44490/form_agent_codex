@@ -11,13 +11,16 @@ from fastapi import Depends, FastAPI, HTTPException, UploadFile, WebSocket, WebS
 from form_contracts import DocumentFact, FactStatus, FactValueType, Sensitivity, redacted_fact_repr
 
 from ..chat_agent import interpret_or_fallback
+from ..document_intelligence.extract import extract_facts
 from ..document_intelligence.fact_store import FactStore
 from ..document_intelligence.parser_factory import build_parser_from_env
 from ..document_intelligence.pipeline import DocumentPipeline
 from ..document_intelligence.store import DocumentRejected, DocumentStore
+from ..document_intelligence.vlm_extract import supports_vlm, vlm_extract
 from ..driver import apply_edits, run_fill
 from ..mapper import DeterministicMapper, Mapper
 from ..memory import MappingMemory
+from ..model_gateway.base import ModelUnavailable
 from ..persistence.repository import Repository, make_engine
 from ..snapshot import build_snapshot, summarize
 from .auth import AuthError, DevTokenAuth
@@ -177,10 +180,7 @@ def _parse_document(st, session, loop, filename, mime, content_b64, current_fact
     def worker():
         try:
             data = base64.b64decode(content_b64 or "")
-            pipeline = DocumentPipeline(
-                store=st.documents, parser=build_parser_from_env(), facts=st.facts
-            )
-            record, report, _model_calls = pipeline.ingest(
+            record = st.documents.upload(
                 data, filename or "upload", mime or "application/octet-stream"
             )
             st.repo.record_document(
@@ -192,7 +192,25 @@ def _parse_document(st, session, loop, filename, mime, content_b64, current_fact
                 record.sha256,
                 storage_key=f"docs/{record.document_id}",
             )
-            fields, conflicts = _merge_profile(current_facts or [], report.facts)
+            # Primary: a reasoning VLM reads the document directly (layout-agnostic),
+            # targeting the fields the current form needs when we have observed it.
+            # Fallback: the Textract + label-recognizer pipeline.
+            gateway = getattr(st.mapper, "_gateway", None)
+            target = [
+                f["label"] for f in st.form_state.get(session.run_id, []) if f.get("label")
+            ]
+            extracted = None
+            if supports_vlm(gateway):
+                try:
+                    extracted = vlm_extract(gateway, data, record.mime_type, target or None)
+                except (ModelUnavailable, ValueError):
+                    extracted = None
+            if extracted is None:
+                parsed = build_parser_from_env().parse(
+                    record.document_id, st.documents.blob(record.document_id), record.mime_type
+                )
+                extracted = list(extract_facts(parsed, keep_unknown=True).facts)
+            fields, conflicts = _merge_profile(current_facts or [], extracted)
             existing_keys = {f.get("key") for f in (current_facts or [])}
             added = [f["key"] for f in fields if f["key"] not in existing_keys]
             payload = {
@@ -201,7 +219,6 @@ def _parse_document(st, session, loop, filename, mime, content_b64, current_fact
                 "fields": fields,
                 "conflicts": conflicts,
                 "added": added,
-                "skipped_pages": [q.page for q in report.skipped_pages],
             }
         except DocumentRejected as error:
             payload = {"type": "document_error", "error": str(error)}
