@@ -15,11 +15,7 @@ from dataclasses import dataclass, field
 
 from .model_gateway.base import ModelUnavailable
 from .model_gateway.json_chat import extract_json
-
-# Fact keys that must never be set from a chat instruction (invariant 2). Matched
-# as substrings, chosen so real keys like "pincode" are unaffected.
-_CREDENTIAL_HINTS = ("password", "otp", "captcha", "cvv")
-_CREDENTIAL_KEYS = frozenset({"cc", "card", "card_number", "cc_number", "cvc"})
+from .safety import is_credential_key
 
 
 @dataclass
@@ -79,7 +75,7 @@ Rules:
 
 def _fact_line(f: dict) -> str:
     val = f.get("value") if f.get("sensitivity") == "public" else "(personal)"
-    return f'- {f["key"]}: {val}'
+    return f"- {f['key']}: {val}"
 
 
 def build_user_prompt(
@@ -87,12 +83,12 @@ def build_user_prompt(
 ) -> str:
     form_lines = []
     for s in snapshot:
-        bits = [s["label"], f'[{s["input_type"]}]']
-        bits.append(f'= {s["value"]!r}' if s["value"] else "= (empty)")
+        bits = [s["label"], f"[{s['input_type']}]"]
+        bits.append(f"= {s['value']!r}" if s["value"] else "= (empty)")
         if s.get("max_length"):
-            bits.append(f'(max {s["max_length"]} chars)')
+            bits.append(f"(max {s['max_length']} chars)")
         if s.get("error"):
-            bits.append(f'ERROR: {s["error"]}')
+            bits.append(f"ERROR: {s['error']}")
         choices = s.get("option_labels") or s.get("options")
         if choices:
             if len(choices) <= 15:
@@ -103,7 +99,7 @@ def build_user_prompt(
     fact_lines = [_fact_line(f) for f in facts]
     # Recent changes let "change it back to the previous value" resolve.
     hist_lines = [
-        f'- {h["key"]}: {h.get("from")!r} -> {h.get("to")!r}'
+        f"- {h['key']}: {h.get('from')!r} -> {h.get('to')!r}"
         for h in (history or [])
         if h.get("key")
     ]
@@ -118,11 +114,6 @@ def build_user_prompt(
     )
 
 
-def _is_credential_key(key: str) -> bool:
-    k = key.strip().lower()
-    return k in _CREDENTIAL_KEYS or any(h in k for h in _CREDENTIAL_HINTS)
-
-
 def parse_plan(raw: str) -> ChatPlan:
     data = json.loads(extract_json(raw))
     reply = str(data.get("reply", "")).strip() or "Done."
@@ -133,7 +124,7 @@ def parse_plan(raw: str) -> ChatPlan:
         kind = item.get("op")
         if kind == "set_fact":
             key, value = item.get("key"), item.get("value")
-            if key and value is not None and not _is_credential_key(str(key)):
+            if key and value is not None and not is_credential_key(str(key)):
                 ops.append(ChatOp("set_fact", key=str(key), value=str(value)))
         elif kind == "refill":
             ops.append(ChatOp("refill"))
@@ -167,7 +158,7 @@ def fallback_interpret(text: str) -> ChatPlan:
     if m:
         key = re.sub(r"[^a-z0-9]+", "_", m.group(1).strip().lower()).strip("_")
         value = m.group(2).strip()
-        if key and not _is_credential_key(key):
+        if key and not is_credential_key(key):
             return ChatPlan(
                 reply=f"Updating {key} = {value} and re-filling…",
                 ops=[ChatOp("set_fact", key=key, value=value)],
@@ -217,7 +208,7 @@ def repair_values(gateway, issues: list[dict]) -> dict[str, str]:
         cap = f" (max {i['max_length']} chars)" if i.get("max_length") else ""
         lines.append(
             f'- key="{i["key"]}" label="{i["label"]}" value={i.get("value")!r} '
-            f'problem={i.get("error")!r}{cap}'
+            f"problem={i.get('error')!r}{cap}"
         )
     user = "Fields to fix:\n" + "\n".join(lines) + "\n\nReturn the JSON."
     try:
@@ -227,11 +218,7 @@ def repair_values(gateway, issues: list[dict]) -> dict[str, str]:
     corrections = data.get("corrections", {})
     if not isinstance(corrections, dict):
         return {}
-    return {
-        str(k): str(v)
-        for k, v in corrections.items()
-        if v and not _is_credential_key(str(k))
-    }
+    return {str(k): str(v) for k, v in corrections.items() if v and not is_credential_key(str(k))}
 
 
 def interpret_or_fallback(

@@ -1,9 +1,9 @@
-"""Profile merge: new fields added, identical values deduped, differing values
+"""Profile merge (profile.merge_document): new fields added, identical values deduped, differing values
 surfaced as conflicts (never silently overwritten)."""
 
 from types import SimpleNamespace
 
-from agent_backend.api.app import _merge_profile
+from agent_backend.profile import merge_document as _merge_profile
 
 
 def _fact(key: str, value: str) -> SimpleNamespace:

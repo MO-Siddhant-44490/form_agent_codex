@@ -14,11 +14,7 @@ from types import SimpleNamespace
 
 from ..model_gateway.base import ModelUnavailable
 from ..model_gateway.json_chat import extract_json
-
-# Keys that must never be captured from a document (invariant 2), matched as
-# substrings (chosen so real keys like "pincode" are unaffected).
-_CREDENTIAL_HINTS = ("password", "otp", "captcha", "cvv")
-_CREDENTIAL_KEYS = frozenset({"cc", "card", "card_number", "cc_number", "cvc"})
+from ..safety import is_credential_key
 
 SYSTEM = """You extract a person's profile from an uploaded document (an image or
 a PDF). Read the WHOLE document — understand its layout, tables, stamps,
@@ -55,11 +51,6 @@ def build_prompt(target_fields: list[str] | None) -> str:
     return "Extract the person's profile fields present in the document. Return the JSON object."
 
 
-def _is_credential_key(key: str) -> bool:
-    k = key.strip().lower()
-    return k in _CREDENTIAL_KEYS or any(h in k for h in _CREDENTIAL_HINTS)
-
-
 def parse_extraction(raw: str) -> list[SimpleNamespace]:
     data = json.loads(extract_json(raw))
     out: list[SimpleNamespace] = []
@@ -72,7 +63,7 @@ def parse_extraction(raw: str) -> list[SimpleNamespace]:
             continue
         key = str(key).strip().lower().replace(" ", "_")
         value = str(value).strip()
-        if not key or not value or key in seen or _is_credential_key(key):
+        if not key or not value or key in seen or is_credential_key(key):
             continue
         seen.add(key)
         out.append(SimpleNamespace(key=key, value=value))
