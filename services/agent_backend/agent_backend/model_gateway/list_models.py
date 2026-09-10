@@ -20,7 +20,6 @@ def main() -> None:
     models = client.list_foundation_models().get("modelSummaries", [])
     anthropic = [m for m in models if "anthropic" in m["modelId"].lower()]
     for m in anthropic:
-        streaming = "converse" in [x.lower() for x in m.get("inferenceTypesSupported", [])] or True
         print(f"  {m['modelId']}  ({m.get('modelName', '?')})")
     if not anthropic:
         print("  (no Anthropic models listed — enable model access in the Bedrock console)")

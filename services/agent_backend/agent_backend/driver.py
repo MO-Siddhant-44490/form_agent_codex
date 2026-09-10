@@ -141,14 +141,14 @@ def _upload_action(
 
 def _pending_upload(observation, uploads, uploaded_fields, blocked_fields):
     """Next file field with an available upload, not yet done."""
-    for field in observation.fields:
-        if field.input_type != "file" or field.field_id in uploaded_fields:
+    for form_field in observation.fields:
+        if form_field.input_type != "file" or form_field.field_id in uploaded_fields:
             continue
-        if field.field_id in blocked_fields:
+        if form_field.field_id in blocked_fields:
             continue
-        key = field.target.name_attr
-        if key and key in uploads and field.current_value != uploads[key].filename:
-            return field, uploads[key]
+        key = form_field.target.name_attr
+        if key and key in uploads and form_field.current_value != uploads[key].filename:
+            return form_field, uploads[key]
     return None
 
 
@@ -192,6 +192,58 @@ def _prepare_reattempt(
             reshaped = normalize_value(base, fresh_field)
             if reshaped is not None and reshaped != base:
                 value_overrides[field_id] = reshaped
+
+
+def _apply_recovery_strategy(
+    strategy: RecoveryStrategy,
+    field_id: str,
+    fresh_field,
+    assignment,
+    *,
+    observation: PageObservation,
+    session: TabSession,
+    transport: BrowserTransport,
+    result: DriveResult,
+    sequence: int,
+    method_hints: dict[str, ActionMethodHint],
+    value_overrides: dict[str, str],
+) -> tuple[int, bool]:
+    """Carry out a non-terminal recovery strategy's side effect: a helper action
+    (scroll / wait), or staging how the next attempt is driven. Returns the
+    updated sequence number and whether the strategy calls for a re-map (a
+    cascade wait expects new/changed dependent fields)."""
+    if strategy is RecoveryStrategy.SCROLL:
+        sequence += 1
+        transport.execute(_helper_action(observation, session, ActionKind.SCROLL, sequence))
+        result.steps_used += 1
+        return sequence, False
+    if strategy in (RecoveryStrategy.WAIT_STABLE, RecoveryStrategy.WAIT_CASCADE):
+        sequence += 1
+        transport.execute(
+            _helper_action(observation, session, ActionKind.WAIT_FOR_STABLE_PAGE, sequence)
+        )
+        result.steps_used += 1
+        return sequence, strategy is RecoveryStrategy.WAIT_CASCADE
+    # ALT_SELECT / REAPPLY / NORMALIZE_VALUE stage how the next attempt is
+    # driven; RETRY / REOBSERVE simply re-attempt.
+    _prepare_reattempt(strategy, field_id, fresh_field, assignment, method_hints, value_overrides)
+    return sequence, False
+
+
+def _block_with_question(
+    result: DriveResult,
+    blocked_fields: set[str],
+    field_id: str,
+    *,
+    question_id: str,
+    kind: QuestionKind,
+    prompt: str,
+) -> None:
+    """Give up on a field for this run and report it to the user — never loop."""
+    blocked_fields.add(field_id)
+    result.questions.append(
+        UserQuestion(question_id=question_id, kind=kind, prompt=prompt, field_id=field_id)
+    )
 
 
 @dataclass
@@ -492,9 +544,7 @@ def run_fill(
                 final_settles += 1
                 sequence += 1
                 transport.execute(
-                    _helper_action(
-                        observation, session, ActionKind.WAIT_FOR_STABLE_PAGE, sequence
-                    )
+                    _helper_action(observation, session, ActionKind.WAIT_FOR_STABLE_PAGE, sequence)
                 )
                 result.steps_used += 1
                 settled = transport.observe()
@@ -588,42 +638,34 @@ def run_fill(
             result.recovery_decisions.append(decision)
             retries[field_id] = retries.get(field_id, 0) + 1
             if decision.strategy is RecoveryStrategy.STOP:
-                blocked_fields.add(field_id)
-                result.questions.append(
-                    UserQuestion(
-                        question_id=f"q-failed-{field_id}",
-                        kind=QuestionKind.AMBIGUOUS_MAPPING,
-                        prompt=(
-                            f"Could not fill {field_id} ({outcome.result.error}); "
-                            "please do it manually."
-                        ),
-                        field_id=field_id,
-                    )
+                _block_with_question(
+                    result,
+                    blocked_fields,
+                    field_id,
+                    question_id=f"q-failed-{field_id}",
+                    kind=QuestionKind.AMBIGUOUS_MAPPING,
+                    prompt=(
+                        f"Could not fill {field_id} ({outcome.result.error}); "
+                        "please do it manually."
+                    ),
                 )
                 observation = transport.observe()
                 continue
-            if decision.strategy in (
-                RecoveryStrategy.WAIT_STABLE,
-                RecoveryStrategy.WAIT_CASCADE,
-            ):
-                sequence += 1
-                transport.execute(
-                    _helper_action(observation, session, ActionKind.WAIT_FOR_STABLE_PAGE, sequence)
-                )
-                result.steps_used += 1
-            else:
-                # ALT_SELECT / REAPPLY / NORMALIZE_VALUE stage how the next
-                # attempt is driven (widget UI, alternate method, reshaped value).
-                _prepare_reattempt(
-                    decision.strategy,
-                    field_id,
-                    fresh_field,
-                    assignment,
-                    method_hints,
-                    value_overrides,
-                )
-            # Re-observe (options may now be loaded), re-map, and the loop
-            # re-attempts the field with a fresh key and any staged hint.
+            sequence, _ = _apply_recovery_strategy(
+                decision.strategy,
+                field_id,
+                fresh_field,
+                assignment,
+                observation=observation,
+                session=session,
+                transport=transport,
+                result=result,
+                sequence=sequence,
+                method_hints=method_hints,
+                value_overrides=value_overrides,
+            )
+            # A failed action always re-maps (options may have loaded since) and
+            # re-observes; the loop re-attempts with a fresh key and any staged hint.
             mapping = None
             observation = transport.observe()
             continue
@@ -665,14 +707,13 @@ def run_fill(
         ):
             # No-recovery ablation: a failure blocks the field immediately.
             if not recover:
-                blocked_fields.add(field_id)
-                result.questions.append(
-                    UserQuestion(
-                        question_id=f"q-norecover-{field_id}",
-                        kind=QuestionKind.AMBIGUOUS_MAPPING,
-                        prompt=f"Could not fill {field_id} (recovery disabled).",
-                        field_id=field_id,
-                    )
+                _block_with_question(
+                    result,
+                    blocked_fields,
+                    field_id,
+                    question_id=f"q-norecover-{field_id}",
+                    kind=QuestionKind.AMBIGUOUS_MAPPING,
+                    prompt=f"Could not fill {field_id} (recovery disabled).",
                 )
                 observation = transport.observe()
                 continue
@@ -683,53 +724,36 @@ def run_fill(
             retries[field_id] = retries.get(field_id, 0) + 1
 
             if decision.strategy in (RecoveryStrategy.STOP, RecoveryStrategy.ASK_USER):
-                blocked_fields.add(field_id)
-                kind = (
-                    QuestionKind.LOW_CONFIDENCE
-                    if decision.strategy is RecoveryStrategy.ASK_USER
-                    else QuestionKind.AMBIGUOUS_MAPPING
-                )
-                result.questions.append(
-                    UserQuestion(
-                        question_id=f"q-recover-{field_id}",
-                        kind=kind,
-                        prompt=(
-                            f"Could not fill {field_id} "
-                            f"({verification.failure_class}); needs your input."
-                        ),
-                        field_id=field_id,
-                    )
+                _block_with_question(
+                    result,
+                    blocked_fields,
+                    field_id,
+                    question_id=f"q-recover-{field_id}",
+                    kind=(
+                        QuestionKind.LOW_CONFIDENCE
+                        if decision.strategy is RecoveryStrategy.ASK_USER
+                        else QuestionKind.AMBIGUOUS_MAPPING
+                    ),
+                    prompt=(
+                        f"Could not fill {field_id} "
+                        f"({verification.failure_class}); needs your input."
+                    ),
                 )
                 observation = transport.observe()
                 continue
-            remap = False
-            if decision.strategy is RecoveryStrategy.SCROLL:
-                sequence += 1
-                transport.execute(_helper_action(observation, session, ActionKind.SCROLL, sequence))
-                result.steps_used += 1
-            elif decision.strategy in (
-                RecoveryStrategy.WAIT_STABLE,
-                RecoveryStrategy.WAIT_CASCADE,
-            ):
-                sequence += 1
-                transport.execute(
-                    _helper_action(observation, session, ActionKind.WAIT_FOR_STABLE_PAGE, sequence)
-                )
-                result.steps_used += 1
-                # A cascade wait expects new/changed dependent fields: force a
-                # remap so their freshly-loaded options are picked up.
-                remap = decision.strategy is RecoveryStrategy.WAIT_CASCADE
-            else:
-                # ALT_SELECT / REAPPLY / NORMALIZE_VALUE stage how the next
-                # attempt is driven; RETRY / REOBSERVE just re-attempt.
-                _prepare_reattempt(
-                    decision.strategy,
-                    field_id,
-                    fresh_field,
-                    assignment,
-                    method_hints,
-                    value_overrides,
-                )
+            sequence, remap = _apply_recovery_strategy(
+                decision.strategy,
+                field_id,
+                fresh_field,
+                assignment,
+                observation=observation,
+                session=session,
+                transport=transport,
+                result=result,
+                sequence=sequence,
+                method_hints=method_hints,
+                value_overrides=value_overrides,
+            )
             if remap:
                 mapping = None
             # Fresh observation; the loop re-selects the still-unsatisfied field

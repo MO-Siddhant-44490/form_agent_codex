@@ -10,7 +10,13 @@ from collections.abc import Callable
 from form_contracts import FieldMappingBatch, ModelCallMetadata
 from pydantic import ValidationError
 
-from .base import GatewayResult, MappingRequest, ModelUnavailable
+from .base import (
+    DerivationRequest,
+    DerivationResult,
+    GatewayResult,
+    MappingRequest,
+    ModelUnavailable,
+)
 from .prompts import SYSTEM_PROMPT, build_user_prompt
 
 # One retry on schema-invalid output; anything more burns budget for noise.
@@ -61,10 +67,10 @@ def run_mapping_chat(
 
 
 def run_derivation_chat(
-    request: "DerivationRequest",
+    request: DerivationRequest,
     model_id: str,
     complete: Callable[[str, str], tuple[str, int | None, int | None]],
-) -> "DerivationResult":
+) -> DerivationResult:
     """Run the derivation call: prompt in, JSON out, validate each proposed
     derived fact against the provided source ids before accepting it. A
     proposal citing an unknown source id, or with no sources, is discarded
