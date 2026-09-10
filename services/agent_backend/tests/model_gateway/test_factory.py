@@ -51,6 +51,10 @@ def test_bedrock_outage_degrades_to_abstention_not_crash(monkeypatch):
     from agent_backend.transports.fake import FakeTransport, basic_form_fields
 
     monkeypatch.setenv("MODEL_PROVIDER", "bedrock")
+    # Keep the test hermetic: the derivation engine also holds a gateway, and
+    # with real AWS credentials in the environment it would succeed and mask
+    # the outage being simulated on the mapping path.
+    monkeypatch.setenv("DERIVE_VALUES", "off")
     mapper = build_default_mapper()
 
     class _Down:
