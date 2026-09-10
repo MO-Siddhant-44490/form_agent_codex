@@ -290,11 +290,25 @@ function makeOnMessage(runId: string): (event: MessageEvent) => Promise<void> {
       return;
     }
     if (env.type === "document_facts") {
-      // Merge extracted facts into our fact set so the next fill uses them,
-      // and show them to the user for review.
-      const facts = (env.facts as { key: string; value: string }[]) ?? [];
-      for (const f of facts) upsertFact(f.key, f.value);
-      chrome.runtime.sendMessage({ type: "FA_DOC_FACTS", filename: env.filename, facts });
+      // The backend returns the MERGED profile (existing + new, deduped) plus
+      // any conflicts. Adopt the merged fields as our fact set and let the panel
+      // render the update + conflicts.
+      const fields = (env.fields as { key: string; value: string }[]) ?? [];
+      if (chat) {
+        chat.facts = fields.map((f) => ({
+          key: f.key,
+          value: f.value,
+          sensitivity: PUBLIC_KEYS.has(f.key) ? "public" : "personal",
+        }));
+        saveSession();
+      }
+      chrome.runtime.sendMessage({
+        type: "FA_DOC_FACTS",
+        filename: env.filename,
+        fields,
+        conflicts: env.conflicts ?? [],
+        added: env.added ?? [],
+      });
       return;
     }
     if (env.type === "document_error") {
@@ -538,6 +552,7 @@ chrome.runtime.onMessage.addListener(
             filename: message.filename,
             mime_type: message.mimeType,
             content_base64: message.contentBase64,
+            facts: message.facts ?? [],
           }),
         );
       })();

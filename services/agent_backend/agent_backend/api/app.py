@@ -142,11 +142,37 @@ def _start_fill(st, session, loop, fact_items, send) -> None:
     threading.Thread(target=worker, daemon=True).start()
 
 
-def _parse_document(st, session, loop, filename, mime, content_b64, send) -> None:
-    """Parse an uploaded document (Textract + Bedrock) into reviewable facts and
-    stream them to the panel. Reuses the same pipeline as the REST endpoint; runs
-    in a worker thread since extraction is slow. Values are the user's own data
-    on their own machine — sent verbatim so they can review them."""
+def _merge_profile(current: list[dict], extracted) -> tuple[list[dict], list[dict]]:
+    """Merge a document's extracted facts into the current profile: a new key is
+    added, an identical value is redundant (deduped), and a different value for
+    an existing key is a CONFLICT the user must resolve (never silently picked).
+    Returns (merged_fields, conflicts)."""
+    cur: dict[str, str] = {}
+    order: list[str] = []
+    for f in current:
+        key = f.get("key")
+        if key and key not in cur:
+            cur[key] = f.get("value")
+            order.append(key)
+    conflicts: list[dict] = []
+    for fact in extracted:
+        key, value = fact.key, fact.value
+        if key not in cur:
+            cur[key] = value
+            order.append(key)
+        elif str(cur[key]).strip() == str(value).strip():
+            continue  # redundant — same value from another document
+        elif not any(c["key"] == key for c in conflicts):
+            conflicts.append({"key": key, "existing": cur[key], "incoming": value})
+    fields = [{"key": k, "value": cur[k]} for k in order]
+    return fields, conflicts
+
+
+def _parse_document(st, session, loop, filename, mime, content_b64, current_facts, send) -> None:
+    """Parse an uploaded document (Textract + Bedrock) and MERGE it into the
+    current profile, returning the merged fields plus any conflicts for the user
+    to resolve. Runs in a worker thread (extraction is slow). Values are the
+    user's own data on their own machine — returned verbatim for review."""
 
     def worker():
         try:
@@ -166,22 +192,15 @@ def _parse_document(st, session, loop, filename, mime, content_b64, send) -> Non
                 record.sha256,
                 storage_key=f"docs/{record.document_id}",
             )
-            review_keys = set(st.facts.needing_review().keys())
-            facts = [
-                {
-                    "key": f.key,
-                    "value": f.value,
-                    "value_type": f.value_type.value,
-                    "sensitivity": f.sensitivity.value,
-                    "confidence": f.confidence,
-                    "needs_review": f.key in review_keys,
-                }
-                for f in report.facts
-            ]
+            fields, conflicts = _merge_profile(current_facts or [], report.facts)
+            existing_keys = {f.get("key") for f in (current_facts or [])}
+            added = [f["key"] for f in fields if f["key"] not in existing_keys]
             payload = {
                 "type": "document_facts",
                 "filename": record.filename,
-                "facts": facts,
+                "fields": fields,
+                "conflicts": conflicts,
+                "added": added,
                 "skipped_pages": [q.page for q in report.skipped_pages],
             }
         except DocumentRejected as error:
@@ -406,6 +425,7 @@ def create_app(state: AppState | None = None) -> FastAPI:
                         raw.get("filename"),
                         raw.get("mime_type"),
                         raw.get("content_base64"),
+                        raw.get("facts", []),
                         send,
                     )
                     continue
