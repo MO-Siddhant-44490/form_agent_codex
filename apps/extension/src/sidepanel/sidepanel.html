@@ -18,6 +18,7 @@
   button { padding: .5rem .9rem; border: 0; border-radius: 6px; font-weight: 600; cursor: pointer; }
   button.primary { background: var(--brand); color: #fff; width: 100%; margin-top: .5rem; }
   button.primary:disabled { background: #9db8d2; cursor: default; }
+  button.secondary { background: #eef4fb; color: var(--brand); border: 1px solid #cfe0f3; width: 100%; margin-bottom: .5rem; }
   #status { padding: .5rem 1rem; font-size: 12px; background: #f3f4f6; border-bottom: 1px solid var(--line); }
   #status.ok { background: #e6f4ea; } #status.warn { background: #fef3c7; } #status.err { background: #fde2e1; }
   #chat { flex: 1; overflow-y: auto; padding: .75rem 1rem; display: flex; flex-direction: column; gap: .5rem; }
@@ -50,21 +51,24 @@
 </header>
 
 <details id="profile" open>
-  <summary>Your profile — upload a document or type it</summary>
+  <summary>Your profile</summary>
   <div class="profile-body">
-    <textarea id="facts" rows="8" placeholder="Attach a document with 📎 below to build this from — or type one key: value per line (e.g. full_name: Asha Rao)."></textarea>
+    <button id="upload" class="secondary" type="button">📄 Upload a document to build your profile</button>
+    <label for="facts">Profile — edit values, or add fields the form needs</label>
+    <textarea id="facts" rows="8" placeholder="Upload a document above, or type one key: value per line — e.g.
+full_name: Asha Rao
+email: asha@example.com
+pincode: 560001"></textarea>
     <button id="fill" class="primary">Fill this form</button>
   </div>
 </details>
+<input id="file" type="file" hidden accept=".pdf,.png,.jpg,.jpeg,.txt,.tiff" />
 
 <div id="status">Ready. Open a form in this tab, then click Fill.</div>
 
 <div id="chat"></div>
 
 <form id="composer" autocomplete="off">
-  <label id="attach" title="Attach a document (resume, ID…) to build your profile from">📎
-    <input id="file" type="file" hidden accept=".pdf,.png,.jpg,.jpeg,.txt,.tiff" />
-  </label>
   <input id="chatinput" type="text" placeholder="Answer, or e.g. “set state to Karnataka”, “refill”…" />
   <button id="send" type="submit">Send</button>
 </form>

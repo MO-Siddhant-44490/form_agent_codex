@@ -11,6 +11,7 @@ const composer = document.getElementById("composer") as HTMLFormElement;
 const chatInput = document.getElementById("chatinput") as HTMLInputElement;
 const profile = document.getElementById("profile") as HTMLDetailsElement;
 const fileInput = document.getElementById("file") as HTMLInputElement;
+const uploadBtn = document.getElementById("upload") as HTMLButtonElement;
 
 const BACKEND = "http://127.0.0.1:8000";
 
@@ -81,6 +82,8 @@ function mergeIntoProfile(facts: { key: string; value: string }[]): void {
     /* ignore */
   }
 }
+
+uploadBtn.addEventListener("click", () => fileInput.click());
 
 fileInput.addEventListener("change", () => {
   const file = fileInput.files?.[0];
