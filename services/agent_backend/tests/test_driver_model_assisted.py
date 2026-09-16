@@ -115,3 +115,28 @@ def test_driver_fills_derived_field_end_to_end():
     age_field = next(f for f in transport.fields if f.field_id == "age")
     assert age_field.value and int(age_field.value) > 0  # filled with a computed age
     assert "age" in result.filled_fields
+
+
+def test_model_outage_is_reported_not_disguised_as_completed():
+    """Expired credentials must not yield 'COMPLETED, all fields filled' with
+    nothing filled: the outcome says the model was unreachable and why."""
+    from agent_backend.mapper import ModelAssistedMapper
+    from agent_backend.model_gateway.base import ModelUnavailable
+    from agent_backend.transports.fake import FakeField, FakeTransport
+    from form_contracts import RunOutcome
+
+    class Down:
+        def map_fields(self, request):
+            raise ModelUnavailable("ExpiredTokenException: the security token is expired")
+
+    # Obscure names, nothing required: the deterministic pass has nothing to say.
+    fields = [
+        FakeField("f1", "text", "fld_1", "Full name"),
+        FakeField("f2", "email", "fld_2", "Email"),
+    ]
+    transport = FakeTransport(fields=fields)
+    result = run_fill(transport, slice1_facts(), mapper=ModelAssistedMapper(Down()))
+    assert result.filled_fields == []
+    assert result.outcome is RunOutcome.NEEDS_USER
+    assert result.model_unavailable and "ExpiredTokenException" in result.model_unavailable
+    assert "unreachable" in (result.detail or "")

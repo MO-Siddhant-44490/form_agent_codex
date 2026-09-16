@@ -61,6 +61,9 @@ class DriveResult:
     validation: ValidationReport = field(default_factory=ValidationReport)
     model_calls: list[ModelCallMetadata] = field(default_factory=list)
     detail: str | None = None
+    # The model was needed but unreachable (why); fields it would have mapped
+    # were left empty. Surfaced to the user, never hidden behind "COMPLETED".
+    model_unavailable: str | None = None
 
 
 _REOBSERVE_REJECTIONS = {RejectionReason.STALE_OBSERVATION, RejectionReason.STALE_SEQUENCE}
@@ -834,10 +837,18 @@ def _finish(
     )
     result.validation = report
 
-    has_problems = bool(result.questions or blocked_fields or report.issues)
+    result.model_unavailable = mapping.model_unavailable
+    has_problems = bool(
+        result.questions or blocked_fields or report.issues or mapping.model_unavailable
+    )
     if has_problems:
         result.outcome = RunOutcome.NEEDS_USER
         parts = []
+        if mapping.model_unavailable:
+            parts.append(
+                "the mapping model was unreachable, so unmatched fields were left empty "
+                f"({mapping.model_unavailable})"
+            )
         if result.questions:
             parts.append(f"{len(result.questions)} clarification question(s)")
         if blocked_fields:

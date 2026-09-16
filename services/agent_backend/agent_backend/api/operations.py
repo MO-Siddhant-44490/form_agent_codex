@@ -122,6 +122,7 @@ def _drive_trace(result) -> dict:
             if d.decision.value == "BLOCK"
         ],
         "model_calls": len(result.model_calls),
+        "model_unavailable": result.model_unavailable,
         "steps": result.steps_used,
     }
 
@@ -170,6 +171,7 @@ def _fill_payload(result, state) -> dict:
         ],
         "state": state,
         "detail": result.detail,
+        "model_unavailable": result.model_unavailable,
     }
 
 
@@ -234,7 +236,14 @@ def start_fill(st, session, loop, fact_items: list[dict], send) -> None:
         )
         auto_repair(st, transport, session, fact_items)
         observation = _observe_quietly(transport)
-        _trace(st, session.run_id, "fill_trace", observation, **_drive_trace(result))
+        _trace(
+            st,
+            session.run_id,
+            "fill_trace",
+            observation,
+            facts_count=len(fact_items),
+            **_drive_trace(result),
+        )
         return {
             "type": "fill_result",
             **_fill_payload(result, _reperceive(st, transport, session.run_id)),
@@ -303,6 +312,7 @@ def _edit(st, transport, session, plan_reply: str, fact_items, keys, bindings=No
         "edit_trace",
         _observe_quietly(transport),
         keys=sorted(keys),
+        facts_count=len(fact_items),
         bindings=bindings or {},
         filled=edit.filled_fields,
         failed=edit.failed_fields,

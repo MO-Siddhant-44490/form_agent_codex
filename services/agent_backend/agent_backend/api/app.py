@@ -62,6 +62,21 @@ def create_app(state: AppState | None = None) -> FastAPI:
     def get_state() -> AppState:
         return app.state.app_state
 
+    @app.get("/health")
+    def health(st: AppState = Depends(get_state)) -> dict:
+        """Readiness for the panel: which model provider is wired and whether
+        its credentials work right now, so a fill is never attempted blind."""
+        gateway = getattr(st.mapper, "_gateway", None)
+        check = getattr(gateway, "check_credentials", None)
+        problem = check() if callable(check) else None
+        return {
+            "status": "ok",
+            "provider": type(st.mapper).__name__,
+            "model_id": getattr(gateway, "model_id", None),
+            "model_ready": problem is None,
+            "model_problem": problem,
+        }
+
     @app.post("/runs")
     def create_run(goal: str = "fill_only", st: AppState = Depends(get_state)) -> dict:
         import uuid

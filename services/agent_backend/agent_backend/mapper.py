@@ -91,6 +91,10 @@ class MappingOutcome:
     assignments: dict[str, Assignment] = dc_field(default_factory=dict)
     questions: list[UserQuestion] = dc_field(default_factory=list)
     model_calls: list[ModelCallMetadata] = dc_field(default_factory=list)
+    # Set when the model pass was needed but the model could not be reached
+    # (expired credentials, network). The driver reports it — abstaining must
+    # never look like "everything filled".
+    model_unavailable: str | None = None
 
     def approved_values(self) -> dict[str, str | None]:
         return {field_id: a.value for field_id, a in self.assignments.items()}
@@ -395,9 +399,10 @@ class ModelAssistedMapper:
         )
         try:
             result = self._gateway.map_fields(request)
-        except ModelUnavailable:
+        except ModelUnavailable as error:
             # Deterministic fallback: abstain — the missing-fact questions
-            # from the deterministic pass stand (plan.md §11.2).
+            # from the deterministic pass stand (plan.md §11.2) — but say so.
+            outcome.model_unavailable = str(error)
             return
         outcome.model_calls.append(result.metadata)
 

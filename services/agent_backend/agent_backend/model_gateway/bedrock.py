@@ -25,6 +25,29 @@ class BedrockConfig:
 
 
 class BedrockModelAdapter:
+    def check_credentials(self) -> str | None:
+        """A cheap, model-free readiness probe: can this process sign an AWS
+        request right now? Returns None when ready, else the reason (no
+        credentials, expired SSO token, ...). Used at startup and by /health so
+        a misconfigured environment is reported before a fill runs on it."""
+        try:
+            import boto3
+            from botocore.exceptions import BotoCoreError, ClientError
+
+            session = boto3.Session(profile_name=self._config.profile)
+            if session.get_credentials() is None:
+                return (
+                    "no AWS credentials found"
+                    + (f" for profile {self._config.profile!r}" if self._config.profile else "")
+                    + " — set AWS_PROFILE and run `aws sso login --profile <name>`"
+                )
+            session.client("sts", region_name=self._config.region).get_caller_identity()
+            return None
+        except (ClientError, BotoCoreError) as error:
+            return f"AWS credentials unusable: {error}"
+        except Exception as error:  # noqa: BLE001 — a probe must never raise
+            return f"AWS credential check failed: {error}"
+
     def __init__(self, config: BedrockConfig, client: Any | None = None) -> None:
         self._config = config
         self._client = client  # injected in tests; built lazily otherwise

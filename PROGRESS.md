@@ -1,6 +1,6 @@
 # Form Agent — Work Summary
 
-_Last updated: 2026-09-10. Branch `main`; 10 commits ahead of `origin/main` (not yet pushed)._
+_Last updated: 2026-09-16. Branch `main`; 15 commits ahead of `origin/main` (not yet pushed)._
 
 An agentic Chrome extension + local backend that fills web forms from a user
 profile built out of their documents, driven by a chat interface. It never
@@ -28,7 +28,7 @@ submits a form — the human always reviews first.
 | **Phase 3** — attachment library → auto-upload files into file fields | ⏳ Not started |
 | Broaden Textract fallback recognizer (`extract.py`) | ⏳ Optional (VLM is now primary) |
 
-**Tests:** backend 247 passed (+10 browser integration) · extension 101 passed · contracts no drift.
+**Tests:** backend 249 passed (+10 browser integration) · extension 103 passed · contracts no drift.
 
 ---
 
@@ -191,6 +191,14 @@ Pushed through `a8b518a`; the last six are local.
   a value-free **`fill_trace` / `edit_trace`** event per operation so the run
   log answers "why didn't it fill X?". Residual: sites with no roles at all →
   the planned visual (screenshot→VLM) fallback.
+- **"COMPLETED" with nothing filled (2026-09-16).** The backend had been
+  started without `AWS_PROFILE`/`AWS_REGION`; Bedrock raised
+  `ExpiredTokenException`, the mapper abstained silently and the run reported
+  success. Now: the mapper records `model_unavailable`, the driver reports
+  NEEDS_USER with the reason, the panel says so plainly, `/health` +
+  a startup credential probe catch it before a fill, and the fill trace
+  records `facts_count`. Radio groups also carry per-option labels so
+  "Female" matches a radio coded "F".
 - **A modal that holds the form** (the site's "Register" dialog) was dismissed
   as an obstacle → `DialogInfo.contains_form`; the driver never dismisses it.
 - **`aria-describedby` is a description, not an error** (react-select points it
@@ -204,7 +212,11 @@ Pushed through `a8b518a`; the last six are local.
 # 1. AWS (interactive)
 aws sso login --profile dev
 
-# 2. Backend (from the repo root, so durable memory lands in ./_agent_state)
+# 2. Backend (from the repo root, so durable memory lands in ./_agent_state).
+#    AWS_PROFILE/AWS_REGION are REQUIRED in the server's environment — without
+#    them boto3 falls back to the default profile and the model is unreachable.
+#    The server prints "model credentials: ok" (or a WARNING) at startup, and
+#    GET /health reports model_ready; the panel warns before a fill if not.
 export PATH="$HOME/.local/bin:$PATH"
 export AWS_PROFILE=dev AWS_REGION=ap-south-1
 # (optional) export BEDROCK_MODEL_ID=...   # default is Claude Sonnet 4 (apac profile)

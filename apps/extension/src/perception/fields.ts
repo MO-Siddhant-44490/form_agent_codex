@@ -2,7 +2,7 @@
 // Document; no page mutation, no model calls, no value capture for
 // credential-like inputs (invariant 2).
 import type { FormField, TargetDescriptor } from "@form-agent/contracts";
-import { accessibleName, computedRole, explicitLabel, groupLegend } from "./labels";
+import { accessibleName, adjacentText, computedRole, explicitLabel, groupLegend } from "./labels";
 import { detectAriaWidgets } from "./aria";
 import { classifyPurpose, type FieldPurpose } from "./purpose";
 import { deepQueryAll } from "./shadow";
@@ -121,7 +121,11 @@ function baseField(el: Control, fieldId: string): FormField {
     field_id: fieldId,
     target: descriptor(el, fieldId),
     input_type: inputType(el),
-    label: explicitLabel(el),
+    label:
+      explicitLabel(el) ??
+      (el instanceof HTMLInputElement && (el.type === "checkbox" || el.type === "radio")
+        ? adjacentText(el)
+        : null),
     accessible_name: accessibleName(el),
     required: el.required || el.getAttribute("aria-required") === "true",
     disabled: el.disabled,
@@ -184,7 +188,9 @@ function radioGroupField(radios: HTMLInputElement[], name: string): FormField {
     value_length: null,
     purpose: purposeOf(first),
     options: radios.map((r) => r.value),
-    option_labels: null,
+    // Human labels parallel to the values, so a fact "Female" can match a
+    // radio whose value is the code "F".
+    option_labels: radios.map((r) => explicitLabel(r) ?? accessibleName(r) ?? adjacentText(r) ?? r.value),
     validation_message: null,
     max_length: null,
     nearby_text: groupLegend(first),

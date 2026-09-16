@@ -62,3 +62,33 @@ def test_bad_document_rejected_422():
         files={"file": ("x.pdf", b"not a pdf", "application/pdf")},
     )
     assert resp.status_code == 422
+
+
+def test_health_reports_provider_and_model_readiness():
+    from agent_backend.api.app import AppState, create_app
+    from agent_backend.api.auth import DevTokenAuth
+    from agent_backend.document_intelligence.fact_store import FactStore
+    from agent_backend.document_intelligence.store import DocumentStore
+    from agent_backend.mapper import ModelAssistedMapper
+    from agent_backend.model_gateway.fake import FakeModelAdapter
+    from agent_backend.persistence.repository import Repository, make_engine
+    from fastapi.testclient import TestClient
+
+    class Unready(FakeModelAdapter):
+        def check_credentials(self):
+            return "no AWS credentials found"
+
+    for gateway, ready in ((FakeModelAdapter(), True), (Unready(), False)):
+        app = create_app(
+            AppState(
+                repo=Repository(make_engine()),
+                auth=DevTokenAuth(),
+                documents=DocumentStore(),
+                facts=FactStore(),
+                mapper=ModelAssistedMapper(gateway),
+            )
+        )
+        body = TestClient(app).get("/health").json()
+        assert body["provider"] == "ModelAssistedMapper"
+        assert body["model_ready"] is ready
+        assert (body["model_problem"] is None) is ready

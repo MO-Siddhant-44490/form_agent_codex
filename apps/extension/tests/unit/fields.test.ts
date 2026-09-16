@@ -69,3 +69,33 @@ describe("field discovery", () => {
     expect(fields[1]).toMatchObject({ checked: true, current_value: null });
   });
 });
+
+
+describe("radio group option labels", () => {
+  it("captures each radio's label parallel to its value so labels can match codes", () => {
+    document.body.innerHTML = `
+      <fieldset><legend>Gender</legend>
+        <input type="radio" name="Sex" id="m" value="M"><label for="m">Male</label>
+        <input type="radio" name="Sex" id="f" value="F"><label for="f">Female</label>
+      </fieldset>`;
+    const group = discoverFields(document).find((f) => f.field_id === "radio-group:Sex")!;
+    expect(group.options).toEqual(["M", "F"]);
+    expect(group.option_labels).toEqual(["Male", "Female"]);
+  });
+});
+
+
+describe("adjacent-text labels for unlabelled radios and checkboxes", () => {
+  it("reads the loose text next to each radio (the pgportal pattern)", () => {
+    document.body.innerHTML = `
+      <div class="q">Gender
+        <input type="radio" name="Sex" id="Sex_M" value="M"> Male
+        <input type="radio" name="Sex" id="Sex_F" value="F"> Female
+        <input type="radio" name="Sex" id="Sex_O" value="O"> Transgender
+      </div>
+      <p><input type="checkbox" id="nl"> Send me the newsletter</p>`;
+    const fields = discoverFields(document);
+    expect(fields.find((f) => f.field_id === "radio-group:Sex")!.option_labels).toEqual(["Male", "Female", "Transgender"]);
+    expect(fields.find((f) => f.field_id === "nl")!.label).toBe("Send me the newsletter");
+  });
+});

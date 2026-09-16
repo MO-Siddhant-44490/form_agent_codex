@@ -15,10 +15,21 @@ def build_app():
     repo = Repository(make_engine(config.database_url))
     memory = RepositoryMappingMemory(repo)
     mapper = build_default_mapper(memory=memory)
+    gateway = getattr(mapper, "_gateway", None)
     print(
-        f"model provider: {type(mapper).__name__} "
-        f"({getattr(getattr(mapper, '_gateway', None), 'model_id', 'deterministic')})"
+        f"model provider: {type(mapper).__name__} ({getattr(gateway, 'model_id', 'deterministic')})"
     )
+    check = getattr(gateway, "check_credentials", None)
+    problem = check() if callable(check) else None
+    if problem:
+        print(
+            "WARNING: the model is NOT reachable from this process — fills will leave "
+            f"unmatched fields empty. {problem}\n"
+            "  fix: export AWS_PROFILE=dev AWS_REGION=ap-south-1 (and `aws sso login "
+            "--profile dev`), then restart."
+        )
+    else:
+        print("model credentials: ok")
     return create_app(
         AppState(
             repo=repo,

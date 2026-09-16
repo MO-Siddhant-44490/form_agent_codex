@@ -269,6 +269,16 @@ function showFillResult(result: Record<string, unknown>): void {
   } else if (outcome === "COMPLETED") {
     setStatus(`Done — ${filled.length} fields filled. Nothing submitted.`, "ok");
     chat.bubble(`Filled ${filled.length} field(s). Everything checks out — review and submit yourself.`, "agent");
+  } else if (outcome === "NEEDS_USER" && result.model_unavailable) {
+    // The backend could not reach the model: say so plainly instead of
+    // "0 items need you" — the user must fix the environment, not the form.
+    setStatus(`Filled ${filled.length}. The model is unreachable — see below.`, "err");
+    chat.bubble(
+      `I filled ${filled.length} field(s) but could not map the rest: the backend can't reach the model ` +
+        `(${String(result.model_unavailable)}). Fix the backend's AWS session (aws sso login, then restart it ` +
+        `with AWS_PROFILE/AWS_REGION set) and click Fill again.`,
+      "agent",
+    );
   } else if (outcome === "NEEDS_USER") {
     const need = questions.length + issues.length;
     setStatus(`Filled ${filled.length}. ${need} item(s) need you. Nothing submitted.`, "warn");

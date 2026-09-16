@@ -84,3 +84,33 @@ export function computedRole(el: HTMLElement): string {
   if (el instanceof HTMLButtonElement) return "button";
   return "generic";
 }
+
+
+/** Visible text sitting right next to a control (the common "<input> Male"
+ * pattern with no <label>): the text after it up to the next control, else
+ * the text before it, else its parent's text when the parent holds only this
+ * one control. Used as a last-resort label for radios and checkboxes. */
+export function adjacentText(el: HTMLElement): string | null {
+  const isControl = (n: Node): boolean =>
+    n instanceof HTMLElement && (n.matches("input, select, textarea, button") || n.querySelector("input, select, textarea, button") !== null);
+  const collect = (start: Node | null, next: (n: Node) => Node | null): string => {
+    const parts: string[] = [];
+    for (let n = start; n; n = next(n)) {
+      if (isControl(n)) break;
+      const t = n.textContent?.replace(/\s+/g, " ").trim();
+      if (t) parts.push(t);
+      if (n instanceof HTMLElement && /^(BR|DIV|P|LI|TR|TD)$/.test(n.tagName)) break;
+    }
+    return parts.join(" ").trim();
+  };
+  const after = collect(el.nextSibling, (n) => n.nextSibling);
+  if (after) return after;
+  const before = collect(el.previousSibling, (n) => n.previousSibling);
+  if (before) return before;
+  const parent = el.parentElement;
+  if (parent && parent.querySelectorAll("input, select, textarea").length === 1) {
+    const t = parent.textContent?.replace(/\s+/g, " ").trim();
+    if (t) return t;
+  }
+  return null;
+}

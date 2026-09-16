@@ -325,7 +325,27 @@ async function liveSession(): Promise<ChatSession | null> {
 // -- panel commands --------------------------------------------------------
 
 /** "Fill this form": start a fresh session and drive a full fill. */
+/** Readiness preflight: warn before a fill if the backend cannot reach its
+ * model, so an environment problem is never mistaken for a form problem. */
+async function warnIfModelUnready(backendUrl: string): Promise<void> {
+  try {
+    const health = (await (await fetch(`${backendUrl}/health`)).json()) as {
+      model_ready?: boolean;
+      model_problem?: string | null;
+    };
+    if (health.model_ready === false) {
+      agentMsg(
+        `Heads-up: the backend can't reach its model right now (${health.model_problem ?? "unknown"}). ` +
+          `Only fields with an exact name match will fill until that's fixed.`,
+      );
+    }
+  } catch {
+    // The session start below reports an unreachable backend itself.
+  }
+}
+
 export async function fill(facts: ChatFact[], backendUrl: string): Promise<void> {
+  await warnIfModelUnready(backendUrl);
   const result = await startSession(backendUrl, facts);
   if ("error" in result) {
     toPanel({ type: "FA_FILL_DONE", result: { type: "fill_error", error: result.error } });
