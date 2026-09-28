@@ -31,10 +31,18 @@ Rules:
   be inferred with high confidence from unambiguous evidence (e.g. country =
   "India" from nationality "Indian"; state from a well-known city). Never guess
   beyond such clear inferences; omit anything uncertain.
-- Prefer these standard keys when the information is present: full_name,
-  first_name, last_name, gender, date_of_birth, email, mobile, phone, address,
+- Extract EVERY fact the document states about the person, not only identity
+  and contact details: education, languages, emergency contacts, health and
+  medical answers, experience, preferences, prior history, yes/no answers —
+  forms in any domain (jobs, insurance, courses, banking) ask for these.
+- For common concepts use these standard keys: full_name, first_name,
+  last_name, gender, date_of_birth, email, mobile, phone, address,
   sub_locality, locality, city, district, state, country, pincode, nationality,
-  occupation, employer, marital_status.
+  occupation, employer, marital_status. For everything else invent a short,
+  descriptive snake_case key from the document's own label (e.g.
+  emergency_contact_name, emergency_contact_relationship, languages_known,
+  education, previous_courses_completed, current_medication). This list is a
+  naming guide, NOT a limit on what to extract.
 - Normalize obvious formats (a date to YYYY-MM-DD, trim stray spaces) but keep
   the person's data faithful.
 - Never extract passwords, OTPs, CAPTCHA text, CVVs, or full card numbers."""
@@ -45,10 +53,13 @@ def build_prompt(target_fields: list[str] | None) -> str:
         wanted = ", ".join(sorted({t for t in target_fields if t}))
         return (
             "The form being filled asks for these fields (extract their values "
-            f"if the document has them): {wanted}. Also include any other clearly "
-            "present standard profile fields. Return the JSON object."
+            f"if the document has them): {wanted}. Also include every other fact "
+            "the document clearly states about the person. Return the JSON object."
         )
-    return "Extract the person's profile fields present in the document. Return the JSON object."
+    return (
+        "Extract every fact about the person that the document clearly states. "
+        "Return the JSON object."
+    )
 
 
 def parse_extraction(raw: str) -> list[SimpleNamespace]:

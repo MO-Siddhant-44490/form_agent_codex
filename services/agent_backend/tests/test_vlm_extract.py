@@ -53,3 +53,28 @@ def test_supports_vlm_detects_capability():
     assert supports_vlm(FakeModelAdapter()) is True
     assert supports_vlm(object()) is False
     assert supports_vlm(None) is False
+
+
+def test_prompt_asks_for_domain_fields_not_only_standard_keys():
+    """The standard-key list is a naming guide, not a whitelist: a course,
+    job or insurance form needs emergency contacts, health answers, education."""
+    from agent_backend.document_intelligence.vlm_extract import SYSTEM, build_prompt
+
+    assert "NOT a limit" in SYSTEM
+    assert "emergency_contact_name" in SYSTEM
+    assert "every" in build_prompt(None).lower()
+    assert "every other fact" in build_prompt(["Emergency contact"])
+
+
+def test_parse_keeps_domain_specific_keys():
+    from agent_backend.document_intelligence.vlm_extract import parse_extraction
+
+    facts = parse_extraction(
+        '{"facts": [{"key": "Emergency Contact Name", "value": "Lakshmi Iyer"},'
+        ' {"key": "previous_courses_completed", "value": "None"},'
+        ' {"key": "otp", "value": "123456"}]}'
+    )
+    assert [(f.key, f.value) for f in facts] == [
+        ("emergency_contact_name", "Lakshmi Iyer"),
+        ("previous_courses_completed", "None"),
+    ]
