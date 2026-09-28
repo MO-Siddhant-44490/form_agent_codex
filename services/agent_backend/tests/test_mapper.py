@@ -348,3 +348,58 @@ def test_match_option_is_case_insensitive_but_not_loose():
     assert match_option("Ma", opts) is None
     # "India" must not match a 2-letter code "IN".
     assert match_option("India", ["", "IN", "US"]) is None
+
+
+def test_long_forms_are_mapped_in_batches_and_one_bad_batch_does_not_lose_the_rest():
+    """45 unresolved fields -> 3 calls of <= 20; a batch whose output is
+    unusable is reported while the other batches still map."""
+    from agent_backend.mapper import MODEL_BATCH_SIZE
+    from agent_backend.model_gateway.base import ModelUnavailable
+
+    calls = []
+
+    class Batching:
+        def map_fields(self, request):
+            calls.append(len(request.fields))
+            if len(calls) == 2:
+                raise ModelUnavailable("schema-invalid output after 2 attempts")
+            return GatewayResult(
+                batch=FieldMappingBatch(
+                    mappings=[
+                        FieldMapping(field_id=f.field_id, fact_key="full_name", confidence=0.95)
+                        for f in request.fields
+                    ]
+                ),
+                metadata=ModelCallMetadata(
+                    model_id="stub",
+                    latency_ms=1,
+                    schema_valid=True,
+                    request_fingerprint=request.fingerprint(),
+                ),
+            )
+
+    fields = [FakeField(f"f{i}", "text", f"fld_{i}", f"Question {i}") for i in range(45)]
+    outcome = ModelAssistedMapper(Batching()).map(
+        FakeTransport(fields=fields).observe(), facts_by_key()
+    )
+    assert calls == [MODEL_BATCH_SIZE, MODEL_BATCH_SIZE, 5]
+    assert len(outcome.model_calls) == 2
+    assert "schema-invalid" in (outcome.model_unavailable or "")
+    mapped = set(outcome.assignments)
+    assert {f"f{i}" for i in range(20)} <= mapped  # first batch applied
+    assert {f"f{i}" for i in range(40, 45)} <= mapped  # third batch applied
+    assert not ({f"f{i}" for i in range(20, 40)} & mapped)  # failed batch abstained
+
+
+def test_yes_no_questions_take_plain_negative_and_positive_answers():
+    from agent_backend.mapper import match_option
+
+    opts, labels = ["1", "0"], ["Yes", "No"]
+    for v in ("None", "No", "nil", "Never", "N/A", "No medication", "None; healthy"):
+        assert match_option(v, opts, labels) == "0", v
+    assert match_option("Yes", opts, labels) == "1"
+    # Subtle wording is left to the model, not guessed.
+    assert match_option("Occasional hatha yoga", opts, labels) is None
+    assert match_option("Good; no chronic illness", opts, labels) is None
+    # Not a yes/no question: never applied.
+    assert match_option("None", ["A", "B"], ["Alpha", "Beta"]) is None

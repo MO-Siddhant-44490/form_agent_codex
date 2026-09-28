@@ -117,3 +117,25 @@ def test_undriveable_field_is_blocked_not_fatal():
     assert result.outcome is RunOutcome.NEEDS_USER
     assert any(q.field_id == "full-name" for q in result.questions)
     assert len(result.filled_fields) == 7  # everything else filled
+
+
+def test_finish_reports_only_open_questions_one_per_field():
+    from agent_backend.driver import _current_questions
+    from form_contracts import QuestionKind, UserQuestion
+
+    def q(fid, kind):
+        return UserQuestion(question_id=f"q-{fid}-{kind}", kind=kind, prompt="?", field_id=fid)
+
+    qs = [
+        q("med", QuestionKind.MISSING_FACT),
+        q("med", QuestionKind.AMBIGUOUS_MAPPING),  # med was filled later
+        q("phys", QuestionKind.MISSING_FACT),
+        q("phys", QuestionKind.AMBIGUOUS_MAPPING),
+        q("lang", QuestionKind.AMBIGUOUS_MAPPING),
+        q("lang", QuestionKind.LOW_CONFIDENCE),
+    ]
+    out = _current_questions(qs, filled={"med"})
+    assert [(x.field_id, x.kind) for x in out] == [
+        ("phys", QuestionKind.AMBIGUOUS_MAPPING),
+        ("lang", QuestionKind.LOW_CONFIDENCE),
+    ]

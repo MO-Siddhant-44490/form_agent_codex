@@ -28,7 +28,7 @@ submits a form — the human always reviews first.
 | **Phase 3** — attachment library → auto-upload files into file fields | ⏳ Not started |
 | Broaden Textract fallback recognizer (`extract.py`) | ⏳ Optional (VLM is now primary) |
 
-**Tests:** backend 249 passed (+10 browser integration) · extension 103 passed · contracts no drift.
+**Tests:** backend 256 passed (+10 browser integration) · extension 105 passed · contracts no drift.
 
 ---
 
@@ -199,6 +199,20 @@ Pushed through `a8b518a`; the last six are local.
   a startup credential probe catch it before a fill, and the fill trace
   records `facts_count`. Radio groups also carry per-option labels so
   "Female" matches a radio coded "F".
+- **Vipassana application (schedule.vridhamma.org, 2026-09-28): 2 → 25 fields.**
+  A Drupal webform wizard whose "Next" does a full page load. Five generic
+  causes: (1) the observation right after "Next" was still the old page, so
+  the driver concluded "did not advance" — it now waits (bounded) for the new
+  page; (2) the content script injected at attach died with the old document
+  — the extension re-injects it (same origin only); (3) a 45-field page made
+  the mapping answer exceed the 1500-token output cap, truncating the JSON and
+  losing every mapping — mapping is batched (20 fields/call) and the cap is
+  4096; (4) the honeypot check used viewport coordinates, so every field the
+  page had scrolled past vanished — it uses document coordinates now; (5) the
+  final "all fields filled" message overwrote the real stop reason, and stale
+  questions for already-filled fields were reported. Also: Yes/No questions
+  take plain answers ("None" → No), and the VLM extractor keeps every stated
+  fact, not only the 20 standard keys.
 - **A modal that holds the form** (the site's "Register" dialog) was dismissed
   as an obstacle → `DialogInfo.contains_form`; the driver never dismisses it.
 - **`aria-describedby` is a description, not an error** (react-select points it

@@ -22,7 +22,9 @@ Rules:
 - Map a field with confidence >= 0.7 only when a fact key clearly corresponds
   to it.
 - For fields with an options list, set selected_option_value to the single
-  best option value for the fact, or leave it null.
+  best option value for the fact, or leave it null. For a Yes/No question,
+  answer from the fact's MEANING: "None", "Nil", "Good; no chronic illness"
+  for "Do you have any medical condition?" -> the No option's value.
 - If a fact key PLAUSIBLY corresponds but you are not certain — an abbreviation,
   acronym or synonym of the field ("aID"/"uid" for "Aadhaar Number", "dob" for
   "Date of Birth", "mob" for "Mobile") — still return that fact_key, with

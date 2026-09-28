@@ -48,7 +48,12 @@ export function isVisible(el: HTMLElement): boolean {
   if (layout) {
     const rect = el.getBoundingClientRect();
     if (rect.width === 0 && rect.height === 0) return false;
-    if (rect.right <= 0 || rect.bottom <= 0) return false;
+    // Pushed off the top/left of the DOCUMENT (a honeypot trick). This must
+    // use document coordinates: the viewport rect of a normal field the user
+    // has scrolled past is also negative, and it is still a real field.
+    const docRight = rect.right + win.scrollX;
+    const docBottom = rect.bottom + win.scrollY;
+    if (docRight <= 0 || docBottom <= 0) return false;
   }
   return true;
 }

@@ -58,6 +58,11 @@ def _derivation_description(field: FormField) -> str:
 MIN_MODEL_CONFIDENCE = 0.6
 
 
+# Fields per mapping call. Each field's mapping is ~100 output tokens of JSON, so
+# 20 fields stay well inside the model's output limit on any form size.
+MODEL_BATCH_SIZE = 20
+
+
 class MappingSource(StrEnum):
     """How a field->fact binding was produced — its trust provenance. NAME_MATCH
     and AUTOCOMPLETE derive from signals an untrusted page cannot forge without
@@ -159,6 +164,31 @@ def match_option(value: str, options: list[str], labels: list[str] | None = None
         for i, label in enumerate(labels):
             if label and label.strip().lower() == v and i < len(options):
                 return options[i]
+    return _match_yes_no(v, options, labels)
+
+
+_NEGATIVE = frozenset(
+    {"no", "n", "none", "nil", "never", "nothing", "false", "n/a", "na", "not applicable"}
+)
+_POSITIVE = frozenset({"yes", "y", "true"})
+
+
+def _match_yes_no(v: str, options: list[str], labels: list[str] | None) -> str | None:
+    """A Yes/No question answered by a fact that plainly means no ("None",
+    "Nil", "Never", "No ...") or yes. Only when the options ARE a yes/no pair,
+    and only for unambiguous wording — anything subtler is left to the model."""
+    names = [
+        (labels[i] if labels and i < len(labels) and labels[i] else o)
+        for i, o in enumerate(options)
+    ]
+    lowered = [n.strip().lower() for n in names]
+    if "yes" not in lowered or "no" not in lowered:
+        return None
+    word = v.split(";")[0].split(",")[0].strip().rstrip(".")
+    if word in _NEGATIVE or word.startswith(("no ", "none ", "never ")):
+        return options[lowered.index("no")]
+    if word in _POSITIVE:
+        return options[lowered.index("yes")]
     return None
 
 
@@ -393,21 +423,29 @@ class ModelAssistedMapper:
         unused_facts: list[DocumentFact],
         outcome: MappingOutcome,
     ) -> None:
-        request = MappingRequest(
-            fields=tuple(mapping_field_from(f) for f in unresolved),
-            facts=tuple(mapping_fact_from(f) for f in unused_facts),
-        )
-        try:
-            result = self._gateway.map_fields(request)
-        except ModelUnavailable as error:
-            # Deterministic fallback: abstain — the missing-fact questions
-            # from the deterministic pass stand (plan.md §11.2) — but say so.
-            outcome.model_unavailable = str(error)
-            return
-        outcome.model_calls.append(result.metadata)
+        # Batch the fields: one call per MODEL_BATCH_SIZE fields, so a long form
+        # (a 45-field application page) never produces an answer longer than
+        # the model's output limit — which truncates the JSON and loses every
+        # mapping at once. A failed batch is reported; the others still apply.
+        mappings = []
+        facts = tuple(mapping_fact_from(f) for f in unused_facts)
+        for start in range(0, len(unresolved), MODEL_BATCH_SIZE):
+            chunk = unresolved[start : start + MODEL_BATCH_SIZE]
+            request = MappingRequest(
+                fields=tuple(mapping_field_from(f) for f in chunk), facts=facts
+            )
+            try:
+                result = self._gateway.map_fields(request)
+            except ModelUnavailable as error:
+                # Deterministic fallback: abstain on this batch — its missing-fact
+                # questions stand (plan.md §11.2) — but say so.
+                outcome.model_unavailable = str(error)
+                continue
+            outcome.model_calls.append(result.metadata)
+            mappings.extend(result.batch.mappings)
 
         fields_by_id = {f.field_id: f for f in unresolved}
-        for mapping in result.batch.mappings:
+        for mapping in mappings:
             form_field = fields_by_id.get(mapping.field_id)
             if form_field is None:
                 continue  # model invented a field: discard

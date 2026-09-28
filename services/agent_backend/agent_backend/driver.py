@@ -3,6 +3,7 @@ policy gate -> act -> verify, with hard budgets and classified outcomes
 (plan.md §6). Every action passes the deterministic policy gate regardless
 of what proposed it; blocked fields are reported, never silently skipped."""
 
+import time
 from dataclasses import dataclass, field
 
 from form_contracts import (
@@ -43,9 +44,15 @@ from .validation import ValidationReport, validate_form
 class DriverBudgets:
     """Hard caps forcing termination with a classified outcome (invariant 12)."""
 
-    max_steps: int = 60
+    # A long multi-page application (8+ pages, 40+ fields, settle waits per
+    # page) needs headroom; still a hard cap.
+    max_steps: int = 150
     max_retries_per_action: int = 2
     max_pages: int = 15
+    # After "Next", how many settle-and-reobserve rounds to wait for a full
+    # page load to land before concluding the click did not advance.
+    max_navigation_waits: int = 8
+    navigation_wait_s: float = 1.0  # pause between those rounds (~8 s total)
 
 
 @dataclass
@@ -613,15 +620,31 @@ def run_fill(
                 result.detail = f"navigation rejected: {nav_outcome.result.rejection_reason}"
                 return result
 
-            new_observation = nav_outcome.observation or transport.observe()
-            if (
-                new_observation.page_fingerprint == observation.page_fingerprint
-                or new_observation.page_fingerprint in visited_pages
-            ):
-                # Navigation did not reach a new page: stop rather than loop.
-                result.detail = "navigation did not advance to a new page"
-                return _finish(result, mapping, blocked_fields, transport, verify)
+            new_observation = _await_navigation(
+                transport,
+                session,
+                observation,
+                nav_outcome.observation,
+                budgets.max_navigation_waits,
+                sequence,
+                budgets.navigation_wait_s,
+            )
+            sequence += budgets.max_navigation_waits
+            if new_observation is None or new_observation.page_fingerprint in visited_pages:
+                # Navigation did not reach a new page: stop rather than loop,
+                # and say so — there is more form the user must see to.
+                return _finish(
+                    result,
+                    mapping,
+                    blocked_fields,
+                    transport,
+                    verify,
+                    stopped="navigation did not advance to a new page",
+                )
             observation = new_observation
+            mapping = None
+            final_settles = 0  # a new page gets its own cascade settles
+            stability_waits = 0
             continue
 
         field_id, assignment, fresh_field = next_assignment
@@ -812,13 +835,82 @@ def run_fill(
     return result
 
 
+def _await_navigation(
+    transport: BrowserTransport,
+    session: TabSession,
+    before: PageObservation,
+    first: PageObservation | None,
+    max_waits: int,
+    sequence: int,
+    pause_s: float = 1.0,
+) -> PageObservation | None:
+    """A "Next" that triggers a full page load returns before the new page
+    exists: the observation taken right after the click is still the old page
+    (or fails while it unloads). Re-observe, with a settle wait between tries,
+    until the page fingerprint changes. Returns the new page, or None when it
+    never changed within the budget. Bounded (invariant 12)."""
+    candidate = first
+    for i in range(max_waits + 1):
+        if candidate is not None and candidate.page_fingerprint != before.page_fingerprint:
+            return candidate
+        if i == max_waits:
+            break
+        time.sleep(pause_s)  # give a full page load time to land
+        try:
+            transport.execute(
+                _helper_action(before, session, ActionKind.WAIT_FOR_STABLE_PAGE, sequence + i + 1)
+            )
+        except Exception:  # noqa: BLE001 — the old document may be gone mid-load
+            pass
+        try:
+            candidate = transport.observe()
+        except Exception:  # noqa: BLE001 — content script not yet in the new page
+            candidate = None
+    return None
+
+
+# Most useful question first: a concrete proposal beats "which option?", which
+# beats a bare "no fact for this field".
+_QUESTION_RANK = {
+    QuestionKind.SENSITIVE_MAPPING: 0,
+    QuestionKind.LOW_CONFIDENCE: 1,
+    QuestionKind.AMBIGUOUS_MAPPING: 2,
+    QuestionKind.CONFLICTING_FACTS: 3,
+    QuestionKind.MISSING_FACT: 4,
+}
+
+
+def _current_questions(questions: list[UserQuestion], filled: set[str]) -> list[UserQuestion]:
+    """Questions accumulate across re-maps on a changing page. Report only what
+    is still open: drop questions about fields that ended up filled, and keep one
+    question per field — the most useful kind."""
+    best: dict[str, UserQuestion] = {}
+    order: list[str] = []
+    loose: list[UserQuestion] = []
+    for q in questions:
+        if q.field_id is None:
+            loose.append(q)
+            continue
+        if q.field_id in filled:
+            continue
+        current = best.get(q.field_id)
+        if current is None:
+            order.append(q.field_id)
+            best[q.field_id] = q
+        elif _QUESTION_RANK.get(q.kind, 9) < _QUESTION_RANK.get(current.kind, 9):
+            best[q.field_id] = q
+    return [best[f] for f in order] + loose
+
+
 def _finish(
     result: DriveResult,
-    mapping: MappingOutcome,
+    mapping: MappingOutcome | None,
     blocked_fields: set[str],
     transport: BrowserTransport,
     verify: bool = True,
+    stopped: str | None = None,
 ) -> DriveResult:
+    result.questions = _current_questions(result.questions, set(result.filled_fields))
     result.unmapped_required = [
         q.field_id
         for q in result.questions
@@ -837,17 +929,20 @@ def _finish(
     )
     result.validation = report
 
-    result.model_unavailable = mapping.model_unavailable
+    model_unavailable = mapping.model_unavailable if mapping is not None else None
+    result.model_unavailable = model_unavailable
     has_problems = bool(
-        result.questions or blocked_fields or report.issues or mapping.model_unavailable
+        result.questions or blocked_fields or report.issues or model_unavailable or stopped
     )
     if has_problems:
         result.outcome = RunOutcome.NEEDS_USER
         parts = []
-        if mapping.model_unavailable:
+        if stopped:
+            parts.append(stopped)
+        if model_unavailable:
             parts.append(
                 "the mapping model was unreachable, so unmatched fields were left empty "
-                f"({mapping.model_unavailable})"
+                f"({model_unavailable})"
             )
         if result.questions:
             parts.append(f"{len(result.questions)} clarification question(s)")

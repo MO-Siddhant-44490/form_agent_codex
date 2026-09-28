@@ -69,3 +69,59 @@ def test_missing_fact_on_a_later_page_reports_after_filling_the_rest():
     assert transport.current_page == 2
     filled_names = {f.name for page in transport.pages for f in page if f.value or f.checked}
     assert "full_name" in filled_names and "date_of_birth" in filled_names
+
+
+class SlowPageLoad:
+    """A 'Next' that triggers a full page load: the observation returned right
+    after the click, and the next few observes, still show the OLD page (the
+    new document has not arrived yet), then the new page appears."""
+
+    def __init__(self, inner: FakeTransport, stale_observes: int):
+        self.inner = inner
+        self.stale_observes = stale_observes
+        self._stale = None
+        self._remaining = 0
+
+    def attach(self):
+        return self.inner.attach()
+
+    def observe(self):
+        if self._remaining > 0:
+            self._remaining -= 1
+            return self._stale
+        return self.inner.observe()
+
+    def execute(self, action):
+        if action.kind is ActionKind.NAVIGATE_NEXT:
+            before = self.inner.observe()
+            outcome = self.inner.execute(action)
+            self._stale, self._remaining = before, self.stale_observes
+            return (
+                outcome.model_copy(update={"observation": before})
+                if hasattr(outcome, "model_copy")
+                else type(outcome)(
+                    result=outcome.result, observation=before, verification=outcome.verification
+                )
+            )
+        return self.inner.execute(action)
+
+
+def test_waits_for_a_slow_page_load_after_next():
+    transport = SlowPageLoad(FakeTransport(pages=three_page_form()), stale_observes=3)
+    result = run_fill(transport, slice1_facts(), budgets=DriverBudgets(navigation_wait_s=0))
+    assert result.outcome is RunOutcome.COMPLETED, result.detail
+    assert len(result.filled_fields) == 6  # every page reached despite the lag
+
+
+def test_next_that_never_advances_is_reported_not_completed():
+    # Page load never lands within the budget: more form remains, so the
+    # outcome must say so instead of "all fields filled".
+    transport = SlowPageLoad(FakeTransport(pages=three_page_form()), stale_observes=100)
+    result = run_fill(
+        transport,
+        slice1_facts(),
+        budgets=DriverBudgets(navigation_wait_s=0, max_navigation_waits=3),
+    )
+    assert result.outcome is RunOutcome.NEEDS_USER
+    assert "navigation did not advance" in (result.detail or "")
+    assert set(result.filled_fields) == {"full-name", "email"}

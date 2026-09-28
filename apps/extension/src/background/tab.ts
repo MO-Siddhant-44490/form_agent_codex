@@ -60,6 +60,24 @@ export async function attachToTab(tabId: number, url: string): Promise<SessionSt
   return state;
 }
 
+/** A full page load (a wizard's "Next" that POSTs, a redirect) replaces the
+ * document, and the content script injected at attach goes with it. Messages
+ * to the tab then fail with "Receiving end does not exist". Re-inject into the
+ * new document and retry once. Only called after validateSessionOrigin(), so
+ * the script is never injected into a different origin (invariant 8); the
+ * content script guards against double injection itself. */
+const NO_RECEIVER = /Receiving end does not exist|Could not establish connection/i;
+
+async function sendToContent<T>(tabId: number, message: unknown): Promise<T> {
+  try {
+    return (await chrome.tabs.sendMessage(tabId, message)) as T;
+  } catch (error) {
+    if (!(error instanceof Error) || !NO_RECEIVER.test(error.message)) throw error;
+    await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
+    return (await chrome.tabs.sendMessage(tabId, message)) as T;
+  }
+}
+
 /** Re-bind the guard state to a known tab/run without re-injecting a fresh run
  * id — used when reconnecting a backend session after the worker was recycled. */
 export function restoreSession(runId: string, tabId: number, origin: string | null): void {
@@ -110,7 +128,7 @@ export async function observe(): Promise<SessionState> {
     tabId: state.tabId,
     observationSeq: ++observationSeq,
   };
-  const response = (await chrome.tabs.sendMessage(state.tabId, request)) as ObserveResponse;
+  const response = await sendToContent<ObserveResponse>(state.tabId, request);
   if (!response.ok) {
     state.error = response.error;
     return state;
@@ -177,7 +195,7 @@ export async function execute(rawAction: unknown): Promise<ExecuteOutcome> {
     action,
     expectedFingerprint: state.lastObservation?.page_fingerprint ?? null,
   };
-  const response = (await chrome.tabs.sendMessage(state.tabId, request)) as ExecuteResponse;
+  const response = await sendToContent<ExecuteResponse>(state.tabId, request);
   if (!response.ok) {
     return { result: rejected(action, "unsupported", response.error), verification: null, state };
   }

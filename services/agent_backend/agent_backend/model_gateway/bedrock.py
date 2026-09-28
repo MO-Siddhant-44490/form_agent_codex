@@ -19,7 +19,9 @@ class BedrockConfig:
     model_id: str
     region: str = "us-east-1"
     profile: str | None = None  # AWS named profile (e.g. an SSO profile)
-    max_tokens: int = 1500
+    # Output cap per call. 1500 truncated long answers (a 45-field mapping, a
+    # long document's facts) into invalid JSON; mapping is also batched.
+    max_tokens: int = 4096
     temperature: float = 0.0
     read_timeout_s: int = 30
 
