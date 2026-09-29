@@ -170,20 +170,30 @@ function makeOnMessage(runId: string): (event: MessageEvent) => Promise<void> {
       >,
     };
     const rp = reply.payload as Record<string, unknown>;
-    if (payload.command === "observe") {
-      await observe();
-      rp.observation = state.lastObservation;
-    } else if (payload.command === "execute") {
-      const outcome = await execute(payload.action);
-      rp.result = outcome.result;
-      if (outcome.state.lastObservation) rp.observation = outcome.state.lastObservation;
-      if (outcome.verification) rp.verification = outcome.verification;
-      toPanel({
-        type: "FA_FILL_PROGRESS",
-        field: outcome.result.action_id,
-        status: outcome.result.status,
-        verification: outcome.verification?.status ?? null,
-      });
+    // ALWAYS reply, and never with stale data: a read that failed (the tab is
+    // mid-reload after "Next") returns its error, not the previous page's
+    // observation — otherwise the backend acts on a page that no longer exists,
+    // or waits out its timeout for a reply that never comes.
+    try {
+      if (payload.command === "observe") {
+        await observe(); // clears state.error on success, sets it on failure
+        if (!state.error && state.lastObservation) rp.observation = state.lastObservation;
+        else rp.error = state.error ?? "observation unavailable";
+      } else if (payload.command === "execute") {
+        const outcome = await execute(payload.action);
+        rp.result = outcome.result;
+        // The post-action observation only when it is fresh (see execute()).
+        if (outcome.fresh && outcome.state.lastObservation) rp.observation = outcome.state.lastObservation;
+        if (outcome.verification) rp.verification = outcome.verification;
+        toPanel({
+          type: "FA_FILL_PROGRESS",
+          field: outcome.result.action_id,
+          status: outcome.result.status,
+          verification: outcome.verification?.status ?? null,
+        });
+      }
+    } catch (error) {
+      rp.error = error instanceof Error ? error.message : String(error);
     }
     chat?.ws.send(JSON.stringify(reply));
   };

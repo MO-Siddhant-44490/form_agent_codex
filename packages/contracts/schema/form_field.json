@@ -180,6 +180,18 @@
       "title": "Field Id",
       "type": "string"
     },
+    "input_mode": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Input Mode"
+    },
     "input_type": {
       "title": "Input Type",
       "type": "string"
@@ -249,6 +261,18 @@
       ],
       "default": null,
       "title": "Options"
+    },
+    "pattern": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Pattern"
     },
     "purpose": {
       "$ref": "#/$defs/FieldPurpose",

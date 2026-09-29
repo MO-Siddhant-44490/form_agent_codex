@@ -66,4 +66,7 @@ export type ExecuteOutcome = {
   result: ActionResult;
   verification: VerificationResult | null;
   state: SessionState;
+  /** The post-action observation in `state` was read successfully just now
+   * (false/absent when the page was mid-reload and the read failed). */
+  fresh?: boolean;
 };

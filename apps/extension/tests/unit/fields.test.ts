@@ -99,3 +99,22 @@ describe("adjacent-text labels for unlabelled radios and checkboxes", () => {
     expect(fields.find((f) => f.field_id === "nl")!.label).toBe("Send me the newsletter");
   });
 });
+
+
+describe("constraints declared by validation libraries", () => {
+  it("reads ASP.NET / Parsley / jQuery-Validate pattern and max-length attributes", () => {
+    document.body.innerHTML = `
+      <label for="m">Mobile number</label>
+      <input id="m" type="text" data-val="true" data-val-regex-pattern="^[5|6|7|8|9]\\d{9}$"
+             data-val-regex="Please enter 10 digit valid Mobile number">
+      <label for="a">Address</label><input id="a" type="text" data-parsley-maxlength="60">
+      <label for="z">PIN</label><input id="z" type="text" data-rule-pattern="/^\\d{6}$/">
+      <label for="n">Name</label><input id="n" type="text" maxlength="40" pattern="[A-Za-z ]+">`;
+    const by = Object.fromEntries(discoverFields(document).map((f) => [f.field_id, f]));
+    expect(by.m!.pattern).toBe("^[5|6|7|8|9]\\d{9}$");
+    expect(by.a!.max_length).toBe(60);
+    expect(by.z!.pattern).toBe("^\\d{6}$");
+    expect(by.n!.pattern).toBe("[A-Za-z ]+");
+    expect(by.n!.max_length).toBe(40);
+  });
+});

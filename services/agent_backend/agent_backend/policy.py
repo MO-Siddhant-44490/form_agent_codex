@@ -14,6 +14,7 @@ from form_contracts import (
     PolicyRule,
 )
 
+from .adapt import candidates
 from .mapper import match_option as _match_option
 from .purpose import effective_purpose
 
@@ -110,7 +111,12 @@ def check_action(
             )
         if action.resolved_value is not None:
             approved = approved_values.get(action.target.field_id if action.target else "")
-            if action.resolved_value != approved:
+            # A deterministic reshape of the fact value (national phone number,
+            # reformatted date, abbreviated-to-fit address) is still that fact.
+            reshaped = approved is not None and action.resolved_value in candidates(
+                field, approved, observation=observation
+            )
+            if action.resolved_value != approved and not reshaped:
                 return _block(
                     action,
                     PolicyRule.VALUE_WITHOUT_PROVENANCE,

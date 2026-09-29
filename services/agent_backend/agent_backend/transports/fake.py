@@ -3,6 +3,7 @@ semantics as the extension (idempotency, sequence, stale observation).
 Used for deterministic driver tests without a browser."""
 
 import hashlib
+import re
 from dataclasses import dataclass
 from dataclasses import field as dc_field
 from datetime import UTC, datetime
@@ -59,6 +60,24 @@ class FakeField:
     # Perception classifies purpose from the control's text (see purpose.py);
     # a fixture may pin it explicitly.
     purpose: FieldPurpose | None = None
+    # Real-site constraints: HTML maxlength (the value is truncated to it, as a
+    # typing browser/JS limiter does), pattern and placeholder (hints the agent
+    # can read), and a site-side validator: a value not fully matching
+    # `accepts` shows `accept_error` — like a real form's on-blur check.
+    max_length: int | None = None
+    pattern: str | None = None
+    placeholder: str | None = None
+    accepts: str | None = None
+    accept_error: str = "Please enter a valid value."
+
+    def site_error(self) -> str | None:
+        if self.value is None:
+            return None
+        if self.validation_error is not None:
+            return self.validation_error
+        if self.accepts is not None and not re.fullmatch(self.accepts, self.value):
+            return self.accept_error
+        return None
 
 
 def basic_form_fields() -> list[FakeField]:
@@ -192,6 +211,7 @@ class FakeTransport:
                 label=f.label,
                 name_attr=f.name,
                 autocomplete=f.autocomplete,
+                placeholder=f.placeholder,
             ),
             input_type=f.input_type,
             label=f.label,
@@ -203,7 +223,9 @@ class FakeTransport:
             value_length=len(f.value) if redacted and f.value is not None else None,
             purpose=purpose,
             options=f.options,
-            validation_message=f.validation_error if f.value is not None else None,
+            validation_message=None if redacted else f.site_error(),
+            max_length=f.max_length,
+            pattern=f.pattern,
         )
 
     def observe(self) -> PageObservation:
@@ -365,7 +387,10 @@ class FakeTransport:
             target.checked = True
             target.value = action.resolved_value
         else:
-            target.value = action.resolved_value
+            value = action.resolved_value
+            if value is not None and target.max_length:
+                value = value[: target.max_length]
+            target.value = value
 
         self.last_action_seq = action.sequence_number
         result = self._result(action, ActionResultStatus.EXECUTED)
@@ -455,9 +480,10 @@ class FakeTransport:
                 ok = False
             if expected.checked is not None and target.checked != expected.checked:
                 ok = False
-        if ok and target.validation_error is not None and target.value is not None:
+        if ok and target.site_error() is not None:
             ok = False
             failure = FailureClass.VALIDATION_ERROR
+            evidence = evidence.model_copy(update={"validation_message": target.site_error()})
         if ok:
             return VerificationResult(
                 action_id=action.action_id,

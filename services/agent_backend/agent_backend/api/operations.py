@@ -41,7 +41,9 @@ def _run_in_worker(st, session, loop, send, work: Callable, *, event: str) -> No
         except Exception as error:  # noqa: BLE001 — surface, don't crash the socket
             payload = {"type": f"{event}_error", "error": str(error)}
         st.repo.append_event(
-            session.run_id, f"{event}_completed", {"outcome": payload.get("outcome")}
+            session.run_id,
+            f"{event}_completed",
+            {"outcome": payload.get("outcome"), "error": payload.get("error")},
         )
         asyncio.run_coroutine_threadsafe(send(payload), loop)
 
@@ -172,10 +174,38 @@ def _fill_payload(result, state) -> dict:
         "state": state,
         "detail": result.detail,
         "model_unavailable": result.model_unavailable,
+        "left_blank": result.left_blank,
     }
 
 
 # -- auto-repair ------------------------------------------------------------
+
+
+def _field_repairer(st):
+    """A per-field repair for the driver: the model gets the field, the value
+    the site rejected, and the site's own error message, and proposes a
+    corrected value (the driver accepts it only as a reshape of the fact)."""
+    gateway = _gateway(st)
+    if gateway is None:
+        return None
+
+    def repair(field, rejected: str, error: str) -> str | None:
+        key = field.field_id
+        fixed = repair_values(
+            gateway,
+            [
+                {
+                    "key": key,
+                    "label": field.label or field.accessible_name or key,
+                    "value": rejected,
+                    "error": error,
+                    "max_length": field.max_length,
+                }
+            ],
+        )
+        return fixed.get(key)
+
+    return repair
 
 
 def auto_repair(st, transport, session, fact_items: list[dict], rounds: int = 2):
@@ -232,7 +262,11 @@ def start_fill(st, session, loop, fact_items: list[dict], send) -> None:
 
     def work(transport):
         result = run_fill(
-            transport, facts_from_payload(fact_items), mapper=st.mapper, memory=st.memory
+            transport,
+            facts_from_payload(fact_items),
+            mapper=st.mapper,
+            memory=st.memory,
+            repair=_field_repairer(st),
         )
         auto_repair(st, transport, session, fact_items)
         observation = _observe_quietly(transport)

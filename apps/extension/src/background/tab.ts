@@ -68,11 +68,24 @@ export async function attachToTab(tabId: number, url: string): Promise<SessionSt
  * content script guards against double injection itself. */
 const NO_RECEIVER = /Receiving end does not exist|Could not establish connection/i;
 
+/** Wait (bounded) for a tab that is mid-navigation to finish loading, so the
+ * next message reaches the NEW document rather than racing its unload. */
+async function waitForTabLoaded(tabId: number, timeoutMs = 10000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const tab = await chrome.tabs.get(tabId);
+    if (tab.status === "complete") return;
+    await new Promise((r) => setTimeout(r, 150));
+  }
+}
+
 async function sendToContent<T>(tabId: number, message: unknown): Promise<T> {
+  await waitForTabLoaded(tabId);
   try {
     return (await chrome.tabs.sendMessage(tabId, message)) as T;
   } catch (error) {
     if (!(error instanceof Error) || !NO_RECEIVER.test(error.message)) throw error;
+    await waitForTabLoaded(tabId);
     await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
     return (await chrome.tabs.sendMessage(tabId, message)) as T;
   }
@@ -128,7 +141,13 @@ export async function observe(): Promise<SessionState> {
     tabId: state.tabId,
     observationSeq: ++observationSeq,
   };
-  const response = await sendToContent<ObserveResponse>(state.tabId, request);
+  let response: ObserveResponse;
+  try {
+    response = await sendToContent<ObserveResponse>(state.tabId, request);
+  } catch (error) {
+    state.error = `observe failed: ${error instanceof Error ? error.message : String(error)}`;
+    return state;
+  }
   if (!response.ok) {
     state.error = response.error;
     return state;
@@ -212,12 +231,16 @@ export async function execute(rawAction: unknown): Promise<ExecuteOutcome> {
   }
 
   // 4. Independent verification against a fresh observation (invariant 7).
+  // Only a read that succeeded NOW counts: if the page is mid-reload the
+  // re-read fails, and verifying against the previous page would be a lie.
   let verification = null;
+  let fresh = false;
   if (result.status === "EXECUTED") {
     await observe();
-    if (state.lastObservation) verification = verifyAction(action, state.lastObservation);
+    fresh = state.error === null && state.lastObservation !== null;
+    if (fresh) verification = verifyAction(action, state.lastObservation!);
   }
-  return { result, verification, state };
+  return { result, verification, state, fresh };
 }
 
 export async function attachActiveTab(): Promise<SessionState> {

@@ -15,7 +15,7 @@ from form_contracts import (
     VerificationResult,
 )
 
-from ..transport import ExecuteOutcome
+from ..transport import ExecuteOutcome, PageUnavailable
 from .session_hub import ExtensionSession
 
 
@@ -28,7 +28,11 @@ class WebSocketBrowserTransport:
         future = asyncio.run_coroutine_threadsafe(
             self._session.request(message_type, payload), self._loop
         )
-        return future.result(timeout=35.0)
+        try:
+            return future.result(timeout=35.0)
+        except TimeoutError as error:  # no reply: the extension could not answer
+            future.cancel()
+            raise PageUnavailable(f"extension did not answer {payload.get('command')}") from error
 
     def attach(self) -> TabSession:
         return TabSession(
@@ -40,6 +44,8 @@ class WebSocketBrowserTransport:
 
     def observe(self) -> PageObservation:
         reply = self._call(MessageType.PAGE_OBSERVATION, {"command": "observe"})
+        if not reply.get("observation"):
+            raise PageUnavailable(reply.get("error") or "observation unavailable")
         return PageObservation.model_validate(reply["observation"])
 
     def execute(self, action: BrowserAction) -> ExecuteOutcome:
@@ -47,6 +53,8 @@ class WebSocketBrowserTransport:
             MessageType.BROWSER_ACTION,
             {"command": "execute", "action": action.model_dump(mode="json")},
         )
+        if not reply.get("result"):
+            raise PageUnavailable(reply.get("error") or "execute produced no result")
         observation = (
             PageObservation.model_validate(reply["observation"])
             if reply.get("observation")

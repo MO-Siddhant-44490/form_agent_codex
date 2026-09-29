@@ -14,7 +14,7 @@ function field(overrides: Partial<FormField>): FormField {
     },
     input_type: "date", label: "Date of birth", accessible_name: "Date of birth",
     required: true, disabled: false, readonly: false, visible: true, checked: null,
-    current_value: null, value_redacted: false, value_length: null, purpose: "standard", options: null, option_labels: null, validation_message: null,
+    current_value: null, value_redacted: false, value_length: null, purpose: "standard", pattern: null, input_mode: null, options: null, option_labels: null, validation_message: null,
     max_length: null, nearby_text: null,
     ...overrides,
   };

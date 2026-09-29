@@ -4,6 +4,7 @@ policy gate -> act -> verify, with hard budgets and classified outcomes
 of what proposed it; blocked fields are reported, never silently skipped."""
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from form_contracts import (
@@ -13,6 +14,7 @@ from form_contracts import (
     DocumentFact,
     ExpectedEffect,
     FailureClass,
+    FormField,
     ModelCallMetadata,
     NavigationControl,
     NavigationKind,
@@ -31,12 +33,13 @@ from form_contracts import (
     VerificationStatus,
 )
 
+from .adapt import adapt, candidates, plausible_reshape
 from .mapper import Assignment, DeterministicMapper, Mapper, MappingOutcome, user_binding
 from .memory import MappingMemory, field_signature, site_key
 from .planner import assignment_satisfied, build_action_for, normalize_value
 from .policy import check_action
 from .recovery import RecoveryDecision, RecoveryPlanner
-from .transport import BrowserTransport
+from .transport import BrowserTransport, resilient
 from .validation import ValidationReport, validate_form
 
 
@@ -71,6 +74,8 @@ class DriveResult:
     # The model was needed but unreachable (why); fields it would have mapped
     # were left empty. Surfaced to the user, never hidden behind "COMPLETED".
     model_unavailable: str | None = None
+    # Optional fields with no confident value: left blank on purpose, not asked.
+    left_blank: list[str] = field(default_factory=list)
 
 
 _REOBSERVE_REJECTIONS = {RejectionReason.STALE_OBSERVATION, RejectionReason.STALE_SEQUENCE}
@@ -284,6 +289,7 @@ def apply_edits(
     ("use aID for Aadhaar Number"): they override the mapper for those fields
     and, once verified, are remembered so the site maps automatically next time."""
     mapper = mapper or DeterministicMapper()
+    transport = resilient(transport)
     facts_by_key = {f.key: f for f in facts}
     result = EditResult()
 
@@ -305,19 +311,33 @@ def apply_edits(
         # Bounded retry: a single edit can fail transiently (value not yet
         # settled, a widget mid-render). Re-attempt a couple of times with a
         # fresh key before reporting failure — without the full-form loop.
+        # Formats to try, best first (a 10-digit number for a mobile box, a
+        # date in the field's order, an address abbreviated to fit): the next
+        # one is used when the site rejects the previous.
+        tried: list[str] = []
         for attempt in range(3):
             fresh = next((f for f in observation.fields if f.field_id == field_id), None)
             if fresh is None:
                 return "absent"
-            if assignment_satisfied(fresh, assignment.value, assignment.checked):
+            options = candidates(fresh, assignment.value, assignment.fact.key, observation)
+            value_now = next(
+                (c for c in options if c not in tried), options[0] if options else None
+            )
+            if assignment.checked is not None:
+                value_now = assignment.value
+            if _field_done(fresh, assignment, options[0] if options else assignment.value) or any(
+                assignment_satisfied(fresh, t, None) and not fresh.validation_message for t in tried
+            ):
                 return "satisfied"
+            if value_now is not None:
+                tried.append(value_now)
             seq += 1
             action = build_action_for(
                 fresh,
                 run_id=session.run_id,
                 tab_id=session.tab_id,
                 origin=session.origin,
-                value=assignment.value,
+                value=value_now,
                 checked=assignment.checked,
                 sequence_number=seq,
                 source_observation_seq=observation.observation_seq,
@@ -340,7 +360,7 @@ def apply_edits(
             # rather than failing on the length mismatch.
             after = next((f for f in observation.fields if f.field_id == field_id), None)
             cur = after.current_value if after else None
-            value = assignment.value or ""
+            value = value_now or ""
             if cur and value.startswith(cur) and 0 < len(cur) < len(value):
                 return "ok"
         return "failed"
@@ -415,8 +435,13 @@ def run_fill(
     verify: bool = True,
     recover: bool = True,
     memory: MappingMemory | None = None,
+    repair: "Callable[[FormField, str, str], str | None] | None" = None,
 ) -> DriveResult:
-    """`verify` and `recover` are ablation switches (plan.md §17), both on by
+    """`repair(field, rejected_value, site_error)` proposes a corrected value
+    when the site rejects every deterministic reshape (model-backed in the app;
+    its output is accepted only as a plausible reshape of the fact).
+
+    `verify` and `recover` are ablation switches (plan.md §17), both on by
     default. verify=False runs open-loop (trust the executor, skip
     verification) — used to measure the value of the perceive-act-verify loop.
     recover=False disables bounded recovery (a failure blocks the field
@@ -424,6 +449,7 @@ def run_fill(
     """Fill every approved-mappable field on the attached page, verifying
     each action. Never submits (invariant 1)."""
     budgets = budgets or DriverBudgets()
+    transport = resilient(transport)  # a page mid-reload is waited for, not fatal
     mapper = mapper or DeterministicMapper()
     facts_by_key = {f.key: f for f in facts}
     result = DriveResult(outcome=RunOutcome.FATAL_FAILURE, steps_used=0)
@@ -437,6 +463,11 @@ def run_fill(
     # reshaped value. Cleared once the field succeeds.
     method_hints: dict[str, ActionMethodHint] = {}
     value_overrides: dict[str, str] = {}
+    # What the driver typed and the site accepted, per field; what it tried and
+    # the site rejected; model repairs (each field gets at most one).
+    accepted: dict[str, str] = {}
+    tried: dict[str, list[str]] = {}
+    repaired_values: dict[str, str] = {}
     blocked_fields: set[str] = set()
     visited_pages: set[str] = set()
     dialogs_tried: dict[str, int] = {}
@@ -445,6 +476,17 @@ def run_fill(
     recovery = RecoveryPlanner()
     mapping: MappingOutcome | None = None
     mapped_fingerprint: str | None = None
+
+    def _target(field_id: str, assignment, fresh: FormField) -> str | None:
+        """The value to type: what the site already accepted, else a staged
+        retry value, else the fact value adapted to this field's constraints."""
+        if assignment.checked is not None or assignment.value is None:
+            return assignment.value
+        if field_id in accepted:
+            return accepted[field_id]
+        if field_id in value_overrides:
+            return value_overrides[field_id]
+        return adapt(fresh, assignment.value, assignment.fact.key, observation)
 
     stability_waits = 0
     final_settles = 0
@@ -520,7 +562,7 @@ def run_fill(
             fresh = next((f for f in observation.fields if f.field_id == field_id), None)
             if fresh is None:
                 continue
-            if not assignment_satisfied(fresh, assignment.value, assignment.checked):
+            if not _field_done(fresh, assignment, _target(field_id, assignment, fresh)):
                 next_assignment = (field_id, assignment, fresh)
                 break
 
@@ -654,7 +696,7 @@ def run_fill(
             run_id=session.run_id,
             tab_id=session.tab_id,
             origin=session.origin,
-            value=value_overrides.get(field_id, assignment.value),
+            value=(sent := _target(field_id, assignment, fresh_field)),
             checked=assignment.checked,
             sequence_number=sequence,
             source_observation_seq=observation.observation_seq,
@@ -664,7 +706,11 @@ def run_fill(
         )
 
         # Deterministic policy gate before dispatch (invariant: every action).
-        decision = check_action(action, observation, mapping.approved_values())
+        # Approved values: the fact values (deterministic reshapes of them are
+        # recognised by the gate itself) plus model repairs already checked to
+        # be plausible reshapes of the same fact.
+        approved = {**mapping.approved_values(), **repaired_values}
+        decision = check_action(action, observation, approved)
         if decision.decision is PolicyDecisionKind.BLOCK:
             result.policy_decisions.append(decision)
             blocked_fields.add(field_id)
@@ -745,6 +791,8 @@ def run_fill(
             continue
         if verification.status is VerificationStatus.SUCCESS:
             result.filled_fields.append(field_id)
+            if sent is not None and assignment.checked is None:
+                accepted[field_id] = sent
             retries.pop(field_id, None)
             method_hints.pop(field_id, None)
             value_overrides.pop(field_id, None)
@@ -775,6 +823,30 @@ def run_fill(
                 )
                 observation = transport.observe()
                 continue
+            # Like a person re-typing a rejected value: try the next format the
+            # field could want, then a model repair guided by the site's own
+            # error message — and only then fall through to asking the user.
+            if _textual(assignment, fresh_field) and verification.failure_class in _REJECTIONS:
+                tried.setdefault(field_id, []).append(sent or "")
+                after = next((f for f in observation.fields if f.field_id == field_id), fresh_field)
+                nxt = _next_value(
+                    after,
+                    assignment,
+                    tried[field_id],
+                    observation,
+                    repair=repair if field_id not in repaired_values else None,
+                    error=verification.evidence.validation_message
+                    or after.validation_message
+                    or str(verification.failure_class),
+                )
+                if nxt is not None:
+                    if nxt.repaired:
+                        repaired_values[field_id] = nxt.value
+                    value_overrides[field_id] = nxt.value
+                    accepted.pop(field_id, None)
+                    retries[field_id] = retries.get(field_id, 0) + 1
+                    continue
+
             # Bounded recovery: pick the next strategy from the failure ladder.
             decision = recovery.plan(field_id, verification.failure_class)
             result.recovery_decisions.append(decision)
@@ -792,9 +864,8 @@ def run_fill(
                         if decision.strategy is RecoveryStrategy.ASK_USER
                         else QuestionKind.AMBIGUOUS_MAPPING
                     ),
-                    prompt=(
-                        f"Could not fill {field_id} "
-                        f"({verification.failure_class}); needs your input."
+                    prompt=_rejection_prompt(
+                        fresh_field, observation, verification, tried.get(field_id)
                     ),
                 )
                 observation = transport.observe()
@@ -833,6 +904,100 @@ def run_fill(
     result.outcome = RunOutcome.BUDGET_EXHAUSTED
     result.detail = f"step budget ({budgets.max_steps}) exhausted"
     return result
+
+
+_REJECTIONS = frozenset(
+    {FailureClass.VALIDATION_ERROR, FailureClass.VALUE_MISMATCH, FailureClass.VALUE_NOT_APPLIED}
+)
+_MAX_VALUE_ATTEMPTS = 5
+
+
+def _textual(assignment, field: FormField) -> bool:
+    return (
+        assignment.checked is None
+        and assignment.value is not None
+        and not field.options
+        and field.input_type
+        in ("text", "tel", "number", "email", "search", "url", "textarea", "date")
+    )
+
+
+def _field_done(field: FormField, assignment, target: str | None) -> bool:
+    """Filled with what we meant to type — or already holding the raw fact
+    value and the site is not complaining about it."""
+    if assignment_satisfied(field, target, assignment.checked):
+        return True
+    if _combobox_shows(field, target):
+        return True
+    return (
+        target != assignment.value
+        and assignment_satisfied(field, assignment.value, assignment.checked)
+        and not field.validation_message
+    )
+
+
+def _rejection_prompt(field, observation, verification, tried) -> str:
+    """Tell the user what the SITE said, not our internal failure class."""
+    after = next((f for f in observation.fields if f.field_id == field.field_id), field)
+    label = after.label or after.accessible_name or after.field_id
+    said = verification.evidence.validation_message or after.validation_message
+    shown = f" I tried {', '.join(repr(t) for t in tried[-3:])}." if tried else ""
+    if said:
+        return f"The site rejected “{label}”: “{said}”.{shown} What should I enter?"
+    return f"I couldn't fill “{label}” ({verification.failure_class}).{shown} What should I enter?"
+
+
+def _combobox_shows(field: FormField, target: str | None) -> bool:
+    """Custom pickers (intl-tel-input, some design systems) expose no value —
+    only a label showing the selection ("India (भारत): +91"). If that label
+    already names the target, the widget is already set; do not fight it."""
+    if field.input_type != "combobox" or not target or field.current_value:
+        return False
+
+    def squash(
+        text: str,
+    ) -> str:  # letters and digits only: "India (भारत): +91" ~ "India (भारत)+91"
+        return "".join(ch for ch in text.lower() if ch.isalnum())
+
+    shown, want = squash(field.label or field.accessible_name or ""), squash(target)
+    return len(want) >= 2 and want in shown
+
+
+@dataclass
+class _NextValue:
+    value: str
+    repaired: bool = False
+
+
+def _next_value(
+    field: FormField,
+    assignment,
+    tried: list[str],
+    observation: PageObservation,
+    *,
+    repair,
+    error: str,
+) -> "_NextValue | None":
+    """The next value to try after a rejection, or None to give up (ask)."""
+    if len(tried) >= _MAX_VALUE_ATTEMPTS:
+        return None
+    for c in candidates(field, assignment.value, assignment.fact.key, observation):
+        if c not in tried:
+            return _NextValue(c)
+    if repair is None:
+        return None
+    try:
+        proposal = repair(field, tried[-1], error)
+    except Exception:  # noqa: BLE001 — a failed repair just means "ask the user"
+        return None
+    if not proposal:
+        return None
+    proposal = proposal.strip()
+    if field.max_length:
+        proposal = proposal[: field.max_length]
+    if proposal in tried or not plausible_reshape(assignment.value, proposal):
+        return None  # new content is not a repair; the user decides
+    return _NextValue(proposal, repaired=True)
 
 
 def _await_navigation(
@@ -902,6 +1067,30 @@ def _current_questions(questions: list[UserQuestion], filled: set[str]) -> list[
     return [best[f] for f in order] + loose
 
 
+# Asking about an optional field is noise: a person filling the form would just
+# leave it. Only questions about fields we TRIED and failed stay (the user may
+# want to know), identified by their question ids.
+_ATTEMPTED_PREFIXES = ("q-failed-", "q-recover-", "q-norecover-")
+
+
+def _drop_optional_questions(
+    questions: list[UserQuestion], observation: PageObservation
+) -> tuple[list[UserQuestion], list[str]]:
+    by_id = {f.field_id: f for f in observation.fields}
+    kept: list[UserQuestion] = []
+    blank: list[str] = []
+    for q in questions:
+        f = by_id.get(q.field_id) if q.field_id else None
+        optional = f is not None and not f.required
+        if optional and not q.question_id.startswith(_ATTEMPTED_PREFIXES):
+            name = f.label or f.accessible_name or f.field_id
+            if name not in blank:
+                blank.append(name)
+            continue
+        kept.append(q)
+    return kept, blank
+
+
 def _finish(
     result: DriveResult,
     mapping: MappingOutcome | None,
@@ -911,6 +1100,8 @@ def _finish(
     stopped: str | None = None,
 ) -> DriveResult:
     result.questions = _current_questions(result.questions, set(result.filled_fields))
+    final = transport.observe()
+    result.questions, result.left_blank = _drop_optional_questions(result.questions, final)
     result.unmapped_required = [
         q.field_id
         for q in result.questions
@@ -922,11 +1113,7 @@ def _finish(
     # required-empty fields, fields that did not retain a value. Catches
     # form-level issues a per-field check cannot (e.g. an address-length rule).
     # Part of verification, so the open-loop (verify=False) ablation skips it.
-    report = (
-        validate_form(transport.observe(), set(result.filled_fields))
-        if verify
-        else ValidationReport()
-    )
+    report = validate_form(final, set(result.filled_fields)) if verify else ValidationReport()
     result.validation = report
 
     model_unavailable = mapping.model_unavailable if mapping is not None else None

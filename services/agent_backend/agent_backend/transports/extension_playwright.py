@@ -16,7 +16,7 @@ from form_contracts import (
     VerificationResult,
 )
 
-from ..transport import ExecuteOutcome
+from ..transport import ExecuteOutcome, PageUnavailable
 
 
 class ExtensionPlaywrightTransport:
@@ -91,9 +91,12 @@ class ExtensionPlaywrightTransport:
         return self._session
 
     def observe(self) -> PageObservation:
-        state = self._worker.evaluate("() => globalThis.__formAgentTest.observe()")
+        try:
+            state = self._worker.evaluate("() => globalThis.__formAgentTest.observe()")
+        except Exception as error:  # noqa: BLE001 — worker/page mid-navigation
+            raise PageUnavailable(str(error)) from error
         if state.get("error"):
-            raise RuntimeError(f"observe failed: {state['error']}")
+            raise PageUnavailable(f"observe failed: {state['error']}")
         return PageObservation.model_validate(state["lastObservation"])
 
     def execute(self, action: BrowserAction) -> ExecuteOutcome:
@@ -103,7 +106,7 @@ class ExtensionPlaywrightTransport:
         )
         observation = None
         state = outcome.get("state") or {}
-        if state.get("lastObservation"):
+        if state.get("lastObservation") and outcome.get("fresh") is not False:
             observation = PageObservation.model_validate(state["lastObservation"])
         verification = None
         if outcome.get("verification"):

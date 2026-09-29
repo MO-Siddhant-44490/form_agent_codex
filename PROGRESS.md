@@ -28,7 +28,7 @@ submits a form — the human always reviews first.
 | **Phase 3** — attachment library → auto-upload files into file fields | ⏳ Not started |
 | Broaden Textract fallback recognizer (`extract.py`) | ⏳ Optional (VLM is now primary) |
 
-**Tests:** backend 259 passed (+10 browser integration) · extension 105 passed · contracts no drift.
+**Tests:** backend 275 passed (+10 browser integration) · extension 106 passed · contracts no drift.
 
 ---
 
@@ -213,6 +213,24 @@ Pushed through `a8b518a`; the last six are local.
   questions for already-filled fields were reported. Also: Yes/No questions
   take plain answers ("None" → No), and the VLM extractor keeps every stated
   fact, not only the 20 standard keys.
+- **Reliability + filling like a person (2026-09-29).** 6 of 10 real fills on
+  the Vipassana form had failed with no trace. Cause: when the backend asked
+  the extension to read a page that was mid-reload, the extension either
+  replied with the PREVIOUS page's observation or never replied (the backend
+  timed out). Now it always replies, with an error instead of stale data,
+  waits for a loading tab, and the backend retries briefly
+  (`ResilientTransport`, `PageUnavailable`). Verified: 3/3 real side-panel →
+  WebSocket runs, no errors. Values are now fitted to the field BEFORE
+  typing (`adapt.py`: national phone number when the field says 10 digits,
+  has a pattern, or sits next to a country-code picker; dates in the field's
+  stated order; long addresses abbreviated then trimmed), constraints are read
+  from validation libraries too (ASP.NET `data-val-*`, Parsley, jQuery
+  Validate, Angular); a rejected value is re-tried in the next format, then
+  repaired by the model from the site's own error message (accepted only as a
+  reshape of the same fact), and only then asked — quoting the site's message.
+  Optional fields are never asked about; they are listed as left blank.
+  pgportal: 11/11 COMPLETED, no questions. Vipassana: 25 filled, 6 questions,
+  all genuine profile gaps.
 - **Latency (2026-09-29): Vipassana fill 166 s → 26 s, 20 → 5 model calls.**
   Browser work was ~5 s; the rest was the model. Causes: every re-map of a
   re-rendering page re-asked the model the same questions (5 identical

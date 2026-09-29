@@ -113,6 +113,34 @@ function validationMessage(el: Control): string | null {
   return el.validationMessage || null;
 }
 
+// Validation libraries declare the same constraints as HTML, in their own
+// attributes: ASP.NET unobtrusive (data-val-*), Parsley (data-parsley-*),
+// jQuery Validate (data-rule-*), Angular (ng-pattern / ng-maxlength), and the
+// generic data-pattern / data-maxlength. Reading them lets the agent fit a value
+// BEFORE typing instead of learning the rule from a rejection.
+const PATTERN_ATTRS = ["pattern", "data-val-regex-pattern", "data-parsley-pattern", "data-rule-pattern", "ng-pattern", "data-pattern"];
+const MAXLEN_ATTRS = ["data-val-length-max", "data-val-maxlength-max", "data-parsley-maxlength", "data-rule-maxlength", "ng-maxlength", "data-maxlength"];
+
+function declaredPattern(el: Control): string | null {
+  if (el instanceof HTMLSelectElement) return null;
+  for (const attr of PATTERN_ATTRS) {
+    const v = el.getAttribute(attr)?.trim();
+    if (v) return v.replace(/^\/(.*)\/[a-z]*$/, "$1"); // "/^\d+$/" -> "^\d+$"
+  }
+  return null;
+}
+
+function declaredMaxLength(el: Control): number | null {
+  if ((el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) && el.maxLength >= 0) {
+    return el.maxLength;
+  }
+  for (const attr of MAXLEN_ATTRS) {
+    const n = Number.parseInt(el.getAttribute(attr) ?? "", 10);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+  return null;
+}
+
 function baseField(el: Control, fieldId: string): FormField {
   const purpose = purposeOf(el);
   const credential = purpose === "credential";
@@ -146,10 +174,9 @@ function baseField(el: Control, fieldId: string): FormField {
       ? Array.from(el.options).map((o) => o.textContent?.trim() ?? o.value)
       : null,
     validation_message: credential ? null : validationMessage(el),
-    max_length:
-      (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) && el.maxLength >= 0
-        ? el.maxLength
-        : null,
+    max_length: declaredMaxLength(el),
+    pattern: declaredPattern(el),
+    input_mode: el.getAttribute("inputmode"),
     nearby_text: groupLegend(el),
   };
 }
@@ -193,6 +220,8 @@ function radioGroupField(radios: HTMLInputElement[], name: string): FormField {
     option_labels: radios.map((r) => explicitLabel(r) ?? accessibleName(r) ?? adjacentText(r) ?? r.value),
     validation_message: null,
     max_length: null,
+    pattern: null,
+    input_mode: null,
     nearby_text: groupLegend(first),
   };
 }
@@ -316,6 +345,8 @@ function mergeComboboxes(doc: Document, fields: FormField[]): void {
         option_labels: optionLabels,
         validation_message: null,
         max_length: null,
+        pattern: null,
+        input_mode: null,
         nearby_text: groupLegend(el),
       });
     }
@@ -355,7 +386,8 @@ function mergeDatePickers(doc: Document, fields: FormField[]): void {
         disabled: false, readonly: false, visible: true, checked: null,
         current_value: picker.currentValue, value_redacted: false, value_length: null,
         purpose: "standard", options: null, option_labels: null,
-        validation_message: null, max_length: null, nearby_text: groupLegend(el),
+        validation_message: null, max_length: null, pattern: null, input_mode: null,
+        nearby_text: groupLegend(el),
       });
     }
   }

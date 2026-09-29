@@ -304,6 +304,10 @@ function showFillResult(result: Record<string, unknown>): void {
     if (!asked.has(f.field_id)) askEmptyField(f);
   }
   for (const iss of issues) chat.issue(iss.label || iss.field_id, iss.detail);
+  const leftBlank = (result.left_blank as string[] | undefined) ?? [];
+  if (leftBlank.length) {
+    chat.bubble(`Left blank (optional, nothing in your profile fits): ${leftBlank.join(", ")}.`, "sys");
+  }
 
   setComposerEnabled(true); // ready for the next conversational turn
   chatInput.focus();

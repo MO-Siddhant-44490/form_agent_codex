@@ -101,6 +101,8 @@ function base(el: HTMLElement, fieldId: string, role: string, inputType: string,
     option_labels: null,
     validation_message: el.getAttribute("aria-invalid") === "true" ? "field marked invalid" : null,
     max_length: null,
+    pattern: null,
+    input_mode: null,
     nearby_text: nearby,
   };
 }

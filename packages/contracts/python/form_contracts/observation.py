@@ -70,6 +70,11 @@ class FormField(StrictModel):
     # HTML maxlength (chars) when the control enforces one — the reasoning layer
     # needs the real cap to produce a value that won't be silently truncated.
     max_length: int | None = None
+    # HTML `pattern` (a regex the value must fully match) and `inputmode`
+    # (numeric / tel / email / ...): format constraints the agent adapts a
+    # value to BEFORE typing, instead of learning them from a rejection.
+    pattern: str | None = None
+    input_mode: str | None = None
     nearby_text: str | None = None
 
     @model_validator(mode="after")
