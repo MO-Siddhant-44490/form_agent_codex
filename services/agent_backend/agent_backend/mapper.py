@@ -4,6 +4,11 @@ questions instead of guesses. Model output is validated against the actual
 observation and fact set — unknown fields, unknown facts, invented options,
 and credential targets are discarded (invariants 2, 5)."""
 
+import hashlib
+import json
+import threading
+from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from dataclasses import field as dc_field
 from enum import StrEnum
@@ -11,6 +16,7 @@ from typing import Protocol
 
 from form_contracts import (
     DocumentFact,
+    FieldMapping,
     FieldPurpose,
     FormField,
     ModelCallMetadata,
@@ -58,9 +64,15 @@ def _derivation_description(field: FormField) -> str:
 MIN_MODEL_CONFIDENCE = 0.6
 
 
+# Parallel mapping calls per map() (batches are independent).
+MODEL_PARALLELISM = 4
+# Cached per-field model answers kept per mapper (bounded LRU).
+ANSWER_CACHE_SIZE = 5000
+
 # Fields per mapping call. Each field's mapping is ~100 output tokens of JSON, so
-# 20 fields stay well inside the model's output limit on any form size.
-MODEL_BATCH_SIZE = 20
+# 10 fields stay well inside the output limit, and batches run in parallel, so
+# a long page costs roughly one short call of wall-clock time.
+MODEL_BATCH_SIZE = 10
 
 
 class MappingSource(StrEnum):
@@ -286,6 +298,34 @@ class ModelAssistedMapper:
         self._gateway = gateway
         self._derivation = derivation_engine
         self._memory = memory
+        # The model's answer per (field identity, offered facts). A page that
+        # re-renders (a conditional field toggles, a cascade loads) is re-mapped
+        # many times; without this every re-map re-asked the model the same
+        # questions — 5 identical 20k-token calls on one application page.
+        # "No match" answers are cached too, so unmatched fields are asked once.
+        self._answers: OrderedDict[str, FieldMapping | None] = OrderedDict()
+        self._answers_lock = threading.Lock()
+
+    @staticmethod
+    def _answer_key(field: FormField, facts_fp: str) -> str:
+        options = hashlib.sha256(
+            json.dumps(field.options or [], separators=(",", ":")).encode()
+        ).hexdigest()[:12]
+        return f"{field_signature(field)}:{options}:{facts_fp}"
+
+    def _cached(self, key: str) -> tuple[bool, "FieldMapping | None"]:
+        with self._answers_lock:
+            if key in self._answers:
+                self._answers.move_to_end(key)
+                return True, self._answers[key]
+        return False, None
+
+    def _remember_answer(self, key: str, answer: "FieldMapping | None") -> None:
+        with self._answers_lock:
+            self._answers[key] = answer
+            self._answers.move_to_end(key)
+            while len(self._answers) > ANSWER_CACHE_SIZE:
+                self._answers.popitem(last=False)
 
     def map(
         self, observation: PageObservation, facts_by_key: dict[str, DocumentFact]
@@ -423,25 +463,61 @@ class ModelAssistedMapper:
         unused_facts: list[DocumentFact],
         outcome: MappingOutcome,
     ) -> None:
-        # Batch the fields: one call per MODEL_BATCH_SIZE fields, so a long form
-        # (a 45-field application page) never produces an answer longer than
-        # the model's output limit — which truncates the JSON and loses every
-        # mapping at once. A failed batch is reported; the others still apply.
-        mappings = []
+        # Answer from the cache what the model was already asked; send only the
+        # rest, batched (MODEL_BATCH_SIZE per call, so no answer exceeds the
+        # output limit) and in parallel. A failed batch is reported and not
+        # cached; the others still apply.
         facts = tuple(mapping_fact_from(f) for f in unused_facts)
-        for start in range(0, len(unresolved), MODEL_BATCH_SIZE):
-            chunk = unresolved[start : start + MODEL_BATCH_SIZE]
+        # Keyed on the whole profile, not just the facts still unused: which
+        # facts are "unused" shifts as the page settles, and that alone must not
+        # invalidate every answer.
+        facts_fp = hashlib.sha256(
+            json.dumps(
+                [mapping_fact_from(f).__dict__ for f in facts_by_key.values()],
+                sort_keys=True,
+                default=str,
+            ).encode()
+        ).hexdigest()[:16]
+        mappings = []
+        to_ask: list[FormField] = []
+        for f in unresolved:
+            hit, answer = self._cached(self._answer_key(f, facts_fp))
+            if not hit:
+                to_ask.append(f)
+            elif answer is not None:
+                mappings.append(answer.model_copy(update={"field_id": f.field_id}))
+
+        chunks = [to_ask[i : i + MODEL_BATCH_SIZE] for i in range(0, len(to_ask), MODEL_BATCH_SIZE)]
+
+        def ask(chunk: list[FormField]):
             request = MappingRequest(
                 fields=tuple(mapping_field_from(f) for f in chunk), facts=facts
             )
             try:
-                result = self._gateway.map_fields(request)
+                return chunk, self._gateway.map_fields(request), None
             except ModelUnavailable as error:
+                return chunk, None, error
+
+        if len(chunks) > 1:
+            with ThreadPoolExecutor(max_workers=min(MODEL_PARALLELISM, len(chunks))) as pool:
+                results = list(pool.map(ask, chunks))
+        else:
+            results = [ask(c) for c in chunks]
+
+        for chunk, result, error in results:
+            if error is not None:
                 # Deterministic fallback: abstain on this batch — its missing-fact
                 # questions stand (plan.md §11.2) — but say so.
                 outcome.model_unavailable = str(error)
                 continue
             outcome.model_calls.append(result.metadata)
+            by_id = {m.field_id: m for m in result.batch.mappings}
+            for f in chunk:
+                answer = by_id.get(f.field_id)
+                self._remember_answer(
+                    self._answer_key(f, facts_fp),
+                    answer if answer is not None and answer.fact_key is not None else None,
+                )
             mappings.extend(result.batch.mappings)
 
         fields_by_id = {f.field_id: f for f in unresolved}

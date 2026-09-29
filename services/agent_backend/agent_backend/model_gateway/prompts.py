@@ -32,6 +32,8 @@ Rules:
   "use it?" rather than the field being silently left empty.
 - Set fact_key to null only when no known fact could reasonably fit.
 - Never map password, OTP, or CAPTCHA-related fields.
+- Be terse: set "reason" to null unless needs_clarification is true (then at
+  most 8 words). Output length is latency.
 - Respond with ONLY a JSON object: {"mappings": [{"field_id": str,
   "fact_key": str|null, "selected_option_value": str|null,
   "confidence": number 0..1, "needs_clarification": bool,

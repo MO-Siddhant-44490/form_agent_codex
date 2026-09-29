@@ -60,14 +60,21 @@ class MappingRequest:
         return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
 
+# Option lists longer than this are left out of the mapping prompt: a 250-entry
+# country list or phone-code picker costs ~5k tokens and adds nothing to choosing
+# which FACT a field wants; the option VALUE is matched deterministically after.
+MAX_PROMPT_OPTIONS = 40
+
+
 def mapping_field_from(form_field: FormField) -> MappingField:
+    options = form_field.options
     return MappingField(
         field_id=form_field.field_id,
         input_type=form_field.input_type,
         label=form_field.label,
         accessible_name=form_field.accessible_name,
         required=form_field.required,
-        options=tuple(form_field.options) if form_field.options else None,
+        options=tuple(options) if options and len(options) <= MAX_PROMPT_OPTIONS else None,
         nearby_text=form_field.nearby_text,
         autocomplete=form_field.target.autocomplete,
         placeholder=form_field.target.placeholder,

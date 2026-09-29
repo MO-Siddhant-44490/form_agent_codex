@@ -28,7 +28,7 @@ submits a form — the human always reviews first.
 | **Phase 3** — attachment library → auto-upload files into file fields | ⏳ Not started |
 | Broaden Textract fallback recognizer (`extract.py`) | ⏳ Optional (VLM is now primary) |
 
-**Tests:** backend 256 passed (+10 browser integration) · extension 105 passed · contracts no drift.
+**Tests:** backend 259 passed (+10 browser integration) · extension 105 passed · contracts no drift.
 
 ---
 
@@ -213,6 +213,15 @@ Pushed through `a8b518a`; the last six are local.
   questions for already-filled fields were reported. Also: Yes/No questions
   take plain answers ("None" → No), and the VLM extractor keeps every stated
   fact, not only the 20 standard keys.
+- **Latency (2026-09-29): Vipassana fill 166 s → 26 s, 20 → 5 model calls.**
+  Browser work was ~5 s; the rest was the model. Causes: every re-map of a
+  re-rendering page re-asked the model the same questions (5 identical
+  20k-token calls); 250-option country/phone-code lists bloated prompts to
+  21k tokens; long "reason" strings made answers slow to write; derivation
+  repeated per re-map. Fixes: per-field answer cache in the mapper (keyed by
+  field identity + profile; "no match" cached too), derivation cache, batches
+  of 10 run in parallel, option lists > 40 left out of the prompt (values still
+  matched deterministically), terse output.
 - **A modal that holds the form** (the site's "Register" dialog) was dismissed
   as an obstacle → `DialogInfo.contains_form`; the driver never dismisses it.
 - **`aria-describedby` is a description, not an error** (react-select points it

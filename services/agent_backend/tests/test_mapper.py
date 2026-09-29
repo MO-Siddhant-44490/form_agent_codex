@@ -351,17 +351,18 @@ def test_match_option_is_case_insensitive_but_not_loose():
 
 
 def test_long_forms_are_mapped_in_batches_and_one_bad_batch_does_not_lose_the_rest():
-    """45 unresolved fields -> 3 calls of <= 20; a batch whose output is
-    unusable is reported while the other batches still map."""
+    """45 unresolved fields -> ceil(45 / MODEL_BATCH_SIZE) calls; a batch whose
+    output is unusable is reported while the other batches still map."""
     from agent_backend.mapper import MODEL_BATCH_SIZE
     from agent_backend.model_gateway.base import ModelUnavailable
 
     calls = []
+    bad = "f20"
 
     class Batching:
         def map_fields(self, request):
             calls.append(len(request.fields))
-            if len(calls) == 2:
+            if any(f.field_id == bad for f in request.fields):
                 raise ModelUnavailable("schema-invalid output after 2 attempts")
             return GatewayResult(
                 batch=FieldMappingBatch(
@@ -378,17 +379,18 @@ def test_long_forms_are_mapped_in_batches_and_one_bad_batch_does_not_lose_the_re
                 ),
             )
 
-    fields = [FakeField(f"f{i}", "text", f"fld_{i}", f"Question {i}") for i in range(45)]
+    n = 45
+    fields = [FakeField(f"f{i}", "text", f"fld_{i}", f"Question {i}") for i in range(n)]
     outcome = ModelAssistedMapper(Batching()).map(
         FakeTransport(fields=fields).observe(), facts_by_key()
     )
-    assert calls == [MODEL_BATCH_SIZE, MODEL_BATCH_SIZE, 5]
-    assert len(outcome.model_calls) == 2
+    batches = -(-n // MODEL_BATCH_SIZE)
+    assert len(calls) == batches and max(calls) == MODEL_BATCH_SIZE and sum(calls) == n
+    assert len(outcome.model_calls) == batches - 1
     assert "schema-invalid" in (outcome.model_unavailable or "")
-    mapped = set(outcome.assignments)
-    assert {f"f{i}" for i in range(20)} <= mapped  # first batch applied
-    assert {f"f{i}" for i in range(40, 45)} <= mapped  # third batch applied
-    assert not ({f"f{i}" for i in range(20, 40)} & mapped)  # failed batch abstained
+    lo = (20 // MODEL_BATCH_SIZE) * MODEL_BATCH_SIZE  # the failing batch's range
+    failed = {f"f{i}" for i in range(lo, min(lo + MODEL_BATCH_SIZE, n))}
+    assert set(outcome.assignments) == {f"f{i}" for i in range(n)} - failed
 
 
 def test_yes_no_questions_take_plain_negative_and_positive_answers():
@@ -403,3 +405,63 @@ def test_yes_no_questions_take_plain_negative_and_positive_answers():
     assert match_option("Good; no chronic illness", opts, labels) is None
     # Not a yes/no question: never applied.
     assert match_option("None", ["A", "B"], ["Alpha", "Beta"]) is None
+
+
+def _counting_gateway(answer_for):
+    calls = []
+
+    class Counting:
+        def map_fields(self, request):
+            calls.append([f.field_id for f in request.fields])
+            return GatewayResult(
+                batch=FieldMappingBatch(
+                    mappings=[
+                        FieldMapping(field_id=f.field_id, fact_key=answer_for(f), confidence=0.95)
+                        for f in request.fields
+                    ]
+                ),
+                metadata=ModelCallMetadata(
+                    model_id="stub",
+                    latency_ms=1,
+                    schema_valid=True,
+                    request_fingerprint=request.fingerprint(),
+                ),
+            )
+
+    return Counting(), calls
+
+
+def test_remapping_the_same_page_does_not_re_ask_the_model():
+    """A page that re-renders is re-mapped many times: each field is asked
+    once — including the ones the model had no fact for."""
+    gateway, calls = _counting_gateway(
+        lambda f: "full_name" if "name" in (f.label or "").lower() else None
+    )
+    mapper = ModelAssistedMapper(gateway)
+    fields = [
+        FakeField("a", "text", "fld_a", "Your name"),
+        FakeField("b", "text", "fld_b", "Favourite colour"),
+    ]
+    obs = FakeTransport(fields=fields).observe()
+    first = mapper.map(obs, facts_by_key())
+    for _ in range(4):
+        again = mapper.map(obs, facts_by_key())
+        assert set(again.assignments) == set(first.assignments) == {"a"}
+    assert len(calls) == 1  # one model call in total, not five
+
+    # A new field on the page is asked about; the known ones are not.
+    fields.append(FakeField("c", "text", "fld_c", "Applicant name"))
+    mapper.map(FakeTransport(fields=fields).observe(), facts_by_key())
+    assert calls[-1] == ["c"]
+
+
+def test_huge_option_lists_are_left_out_of_the_prompt():
+    from agent_backend.model_gateway.base import MAX_PROMPT_OPTIONS, mapping_field_from
+
+    big = FakeField("cc", "select-one", "cc", "Country code", options=[str(i) for i in range(250)])
+    small = FakeField("sx", "select-one", "sx", "Sex", options=["M", "F"])
+    obs = FakeTransport(fields=[big, small]).observe()
+    by_id = {f.field_id: f for f in obs.fields}
+    assert mapping_field_from(by_id["cc"]).options is None
+    assert mapping_field_from(by_id["sx"]).options == ("M", "F")
+    assert MAX_PROMPT_OPTIONS >= 20
