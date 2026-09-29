@@ -76,6 +76,8 @@ def _drive(ws, browser, run_id, until: str):
         msg = ws.receive_json()
         if msg.get("type") in (until, "fill_error", "chat_error"):
             return msg
+        if msg.get("type") == "fill_progress":
+            continue
         payload = msg["payload"]
         reply = {
             "protocol_version": PROTOCOL_VERSION,

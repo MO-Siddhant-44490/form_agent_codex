@@ -114,6 +114,9 @@ function makeOnMessage(runId: string): (event: MessageEvent) => Promise<void> {
   return async (event: MessageEvent) => {
     const env = JSON.parse(event.data as string);
     switch (env.type) {
+      case "fill_progress":
+        toPanel({ ...env, type: "FA_PROGRESS" });
+        return;
       case "fill_result":
       case "fill_error":
         if (chat) chat.busy = false;

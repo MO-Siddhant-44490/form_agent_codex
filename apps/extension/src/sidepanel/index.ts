@@ -2,7 +2,7 @@
 // in this tab, then talk to the agent — answer its questions, correct a value
 // ("set state to Karnataka"), or say "refill". It never submits.
 import type { ChatFact, SessionState } from "../shared/messages";
-import { ChatView } from "./chat-ui";
+import { ChatView, ProgressCard, type Progress } from "./chat-ui";
 import { ProfileEditor } from "./profile";
 
 const BACKEND = "http://127.0.0.1:8000";
@@ -216,6 +216,7 @@ fileInput.addEventListener("change", () => {
 // -- fill + chat -------------------------------------------------------------
 
 let filledCount = 0;
+let progressCard: ProgressCard | null = null;
 
 fillBtn.addEventListener("click", () => {
   profile.persist();
@@ -262,7 +263,14 @@ function showFillResult(result: Record<string, unknown>): void {
   const outcome = result.outcome ? String(result.outcome) : "";
   const filled = (result.filled as string[]) ?? [];
   const questions = (result.questions as Question[]) ?? [];
-  const issues = (result.validation_issues as { field_id: string; label?: string; detail: string }[]) ?? [];
+  const allIssues = (result.validation_issues as { field_id: string; label?: string; detail: string }[]) ?? [];
+  // One card per field: a field the agent already asks about (or prompts for as
+  // empty-required) does not also get a "required field has no value" card.
+  const askedIds = new Set([
+    ...((result.questions as Question[]) ?? []).map((q) => q.field_id),
+    ...(((result.state as FormState | null)?.empty_required ?? []).map((f) => f.field_id)),
+  ]);
+  const issues = allIssues.filter((i) => !askedIds.has(i.field_id));
 
   if (isChat) {
     setStatus("Updated.", "");
@@ -280,7 +288,7 @@ function showFillResult(result: Record<string, unknown>): void {
       "agent",
     );
   } else if (outcome === "NEEDS_USER") {
-    const need = questions.length + issues.length;
+    const need = new Set([...askedIds, ...issues.map((i) => i.field_id)]).size;
     setStatus(`Filled ${filled.length}. ${need} item(s) need you. Nothing submitted.`, "warn");
     chat.bubble(
       `Filled ${filled.length} field(s). ${need} item(s) need your input — answer below, or just tell me the value.`,
@@ -337,13 +345,18 @@ chrome.runtime.onMessage.addListener((msg: Record<string, unknown>) => {
       fillBtn.disabled = true;
       setComposerEnabled(false);
       setStatus("Working on the form in this tab…", "");
+      progressCard?.finish();
+      progressCard = new ProgressCard($<HTMLElement>("chat"));
       break;
+    case "FA_PROGRESS": {
+      const ev = msg as unknown as Progress;
+      progressCard?.update(ev);
+      const line = progressCard?.statusLine(ev);
+      if (line) setStatus(line, "");
+      break;
+    }
     case "FA_FILL_PROGRESS":
-      if (msg.status === "EXECUTED" && msg.verification === "SUCCESS") {
-        filledCount += 1;
-        setStatus(`Filling… ${filledCount} field(s) done.`, "");
-      }
-      break;
+      break; // superseded by FA_PROGRESS (named fields, real counts)
     case "FA_AGENT_MSG":
       chat.bubble(String(msg.text), "agent");
       break;
@@ -354,6 +367,8 @@ chrome.runtime.onMessage.addListener((msg: Record<string, unknown>) => {
       chat.bubble(`Couldn't read the document: ${String(msg.error)}`, "agent");
       break;
     case "FA_FILL_DONE":
+      progressCard?.finish();
+      progressCard = null;
       fillBtn.disabled = false;
       showFillResult(msg.result as Record<string, unknown>);
       break;

@@ -331,3 +331,17 @@ def plausible_reshape(original: str, new: str) -> bool:
 def _subsequence(short: str, word: str) -> bool:
     it = iter(word)
     return short[0] == word[0] and all(ch in it for ch in short)
+
+
+def widget_shows(field: FormField, value: str | None) -> bool:
+    """Custom pickers (intl-tel-input, some design systems) expose no value —
+    only a label showing the selection ("India (भारत): +91"). True when that
+    label already names `value`, i.e. the widget is already set."""
+    if field.input_type != "combobox" or not value or field.current_value:
+        return False
+
+    def squash(text: str) -> str:  # letters and digits only
+        return "".join(ch for ch in text.lower() if ch.isalnum())
+
+    shown, want = squash(field.label or field.accessible_name or ""), squash(value)
+    return len(want) >= 2 and want in shown

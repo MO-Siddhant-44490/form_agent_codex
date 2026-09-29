@@ -33,7 +33,7 @@ from form_contracts import (
     VerificationStatus,
 )
 
-from .adapt import adapt, candidates, plausible_reshape
+from .adapt import adapt, candidates, plausible_reshape, widget_shows
 from .mapper import Assignment, DeterministicMapper, Mapper, MappingOutcome, user_binding
 from .memory import MappingMemory, field_signature, site_key
 from .planner import assignment_satisfied, build_action_for, normalize_value
@@ -436,6 +436,7 @@ def run_fill(
     recover: bool = True,
     memory: MappingMemory | None = None,
     repair: "Callable[[FormField, str, str], str | None] | None" = None,
+    progress: "Callable[[dict], None] | None" = None,
 ) -> DriveResult:
     """`repair(field, rejected_value, site_error)` proposes a corrected value
     when the site rejects every deterministic reshape (model-backed in the app;
@@ -477,6 +478,33 @@ def run_fill(
     mapping: MappingOutcome | None = None
     mapped_fingerprint: str | None = None
 
+    def emit(phase: str, **detail) -> None:
+        """Live progress for the side panel. Best-effort: never fails a fill."""
+        if progress is None:
+            return
+        try:
+            progress({"phase": phase, "page": len(visited_pages) + 1, **detail})
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _label(f: FormField) -> str:
+        return f.label or f.accessible_name or f.target.placeholder or f.field_id
+
+    def _remaining() -> int:
+        if mapping is None:
+            return 0
+        return sum(
+            1
+            for f in observation.fields
+            if f.field_id in mapping.assignments
+            and f.field_id not in blocked_fields
+            and not _field_done(
+                f,
+                mapping.assignments[f.field_id],
+                _target(f.field_id, mapping.assignments[f.field_id], f),
+            )
+        )
+
     def _target(field_id: str, assignment, fresh: FormField) -> str | None:
         """The value to type: what the site already accepted, else a staged
         retry value, else the fact value adapted to this field's constraints."""
@@ -488,6 +516,7 @@ def run_fill(
             return value_overrides[field_id]
         return adapt(fresh, assignment.value, assignment.fact.key, observation)
 
+    emit("reading", fields=len(observation.fields))
     stability_waits = 0
     final_settles = 0
     while result.steps_used < budgets.max_steps:
@@ -547,20 +576,22 @@ def run_fill(
         # Re-map only when the page structure changed (fingerprints are
         # value-free, so filling fields does not trigger remapping).
         if mapping is None or mapped_fingerprint != observation.page_fingerprint:
+            emit("matching", fields=len(observation.fields))
             mapping = mapper.map(observation, facts_by_key)
             mapped_fingerprint = observation.page_fingerprint
             result.model_calls.extend(mapping.model_calls)
             for question in mapping.questions:
                 if all(q.question_id != question.question_id for q in result.questions):
                     result.questions.append(question)
+            emit("planned", done=len(result.filled_fields), remaining=_remaining())
 
-        # Next unsatisfied, unblocked assignment in document order.
+        # Next unsatisfied, unblocked assignment in the order the PAGE shows
+        # fields (top to bottom) — not the order the mapper resolved them.
         next_assignment = None
-        for field_id, assignment in mapping.assignments.items():
-            if field_id in blocked_fields:
-                continue
-            fresh = next((f for f in observation.fields if f.field_id == field_id), None)
-            if fresh is None:
+        for fresh in observation.fields:
+            field_id = fresh.field_id
+            assignment = mapping.assignments.get(field_id)
+            if assignment is None or field_id in blocked_fields:
                 continue
             if not _field_done(fresh, assignment, _target(field_id, assignment, fresh)):
                 next_assignment = (field_id, assignment, fresh)
@@ -648,6 +679,7 @@ def run_fill(
                 result.detail = f"page budget ({budgets.max_pages}) exhausted"
                 return result
 
+            emit("next_page", done=len(result.filled_fields))
             sequence += 1
             nav_action = _navigation_action(observation, session, nav, sequence)
             decision = check_action(nav_action, observation, {})
@@ -690,6 +722,13 @@ def run_fill(
             continue
 
         field_id, assignment, fresh_field = next_assignment
+        emit(
+            "filling",
+            label=_label(fresh_field),
+            done=len(result.filled_fields),
+            remaining=_remaining(),
+            retry=field_id in tried,
+        )
         sequence += 1
         action = build_action_for(
             fresh_field,
@@ -840,6 +879,12 @@ def run_fill(
                     or str(verification.failure_class),
                 )
                 if nxt is not None:
+                    emit(
+                        "retrying",
+                        label=_label(after),
+                        reason=after.validation_message or str(verification.failure_class),
+                        repaired=nxt.repaired,
+                    )
                     if nxt.repaired:
                         repaired_values[field_id] = nxt.value
                     value_overrides[field_id] = nxt.value
@@ -948,19 +993,7 @@ def _rejection_prompt(field, observation, verification, tried) -> str:
 
 
 def _combobox_shows(field: FormField, target: str | None) -> bool:
-    """Custom pickers (intl-tel-input, some design systems) expose no value —
-    only a label showing the selection ("India (भारत): +91"). If that label
-    already names the target, the widget is already set; do not fight it."""
-    if field.input_type != "combobox" or not target or field.current_value:
-        return False
-
-    def squash(
-        text: str,
-    ) -> str:  # letters and digits only: "India (भारत): +91" ~ "India (भारत)+91"
-        return "".join(ch for ch in text.lower() if ch.isalnum())
-
-    shown, want = squash(field.label or field.accessible_name or ""), squash(target)
-    return len(want) >= 2 and want in shown
+    return widget_shows(field, target)
 
 
 @dataclass

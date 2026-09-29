@@ -267,15 +267,26 @@ export function discoverFieldsWithReport(doc: Document): {
 
   const aria = detectAriaWidgets(doc);
   for (const w of aria.widgets) entries.push({ el: w.el, field: w.field });
-  // Document order across light DOM and open shadow roots (the same traversal
-  // deepQueryAll uses), so the fill proceeds top to bottom.
-  const order = new Map(deepQueryAll<Element>(doc, "*").map((el, i) => [el, i] as const));
-  entries.sort((a, b) => (order.get(a.el) ?? 0) - (order.get(b.el) ?? 0));
   const fields = entries.map((e) => e.field);
+  const elementOf = new Map<FormField, Element>(entries.map((e) => [e.field, e.el]));
 
+  // Library widgets (Select2, date pickers) are merged in after discovery —
+  // often wrapping a HIDDEN native control — so order must be decided after.
   mergeComboboxes(doc, fields);
   mergeDatePickers(doc, fields);
-  return { fields, unrecognized: aria.unrecognized };
+
+  // Document order across light DOM and open shadow roots (the same traversal
+  // deepQueryAll uses), so the fill proceeds top to bottom as the user sees it.
+  const all = deepQueryAll<Element>(doc, "*");
+  const order = new Map(all.map((el, i) => [el, i] as const));
+  const byId = new Map(all.filter((el) => el.id).map((el) => [el.id, el] as const));
+  const position = (f: FormField): number => {
+    const el = elementOf.get(f) ?? byId.get(f.field_id) ?? byId.get(f.target.field_id);
+    return el ? (order.get(el) ?? Number.MAX_SAFE_INTEGER) : Number.MAX_SAFE_INTEGER;
+  };
+  const ranked = fields.map((f, i) => ({ f, i, pos: position(f) }));
+  ranked.sort((a, b) => a.pos - b.pos || a.i - b.i);
+  return { fields: ranked.map((r) => r.f), unrecognized: aria.unrecognized };
 }
 
 // Enrich discovered fields (or add new ones) for ARIA comboboxes so the

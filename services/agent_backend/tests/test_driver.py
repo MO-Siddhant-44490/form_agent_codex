@@ -139,3 +139,38 @@ def test_finish_reports_only_open_questions_one_per_field():
         ("phys", QuestionKind.AMBIGUOUS_MAPPING),
         ("lang", QuestionKind.LOW_CONFIDENCE),
     ]
+
+
+def test_fields_are_filled_top_to_bottom_and_progress_is_reported():
+    """Fill order follows the page, not the mapper's resolution order; every
+    phase is reported for the side panel's live progress card."""
+    from agent_backend.mapper import Assignment, MappingOutcome
+    from agent_backend.transports.fake import FakeField, FakeTransport
+
+    fields = [
+        FakeField("a", "text", "a", "First"),
+        FakeField("b", "text", "b", "Second"),
+        FakeField("c", "text", "c", "Third"),
+    ]
+    facts = {f.key: f for f in slice1_facts()}
+    fact = facts["full_name"]
+
+    class Reversed:  # resolves fields in REVERSE page order
+        def map(self, observation, facts_by_key):
+            out = MappingOutcome()
+            for f in reversed(observation.fields):
+                out.assignments[f.field_id] = Assignment(
+                    field=f, fact=fact, value=fact.value, checked=None
+                )
+            return out
+
+    events = []
+    t = FakeTransport(fields=fields)
+    result = run_fill(t, list(facts.values()), mapper=Reversed(), progress=events.append)
+    assert result.filled_fields == ["a", "b", "c"]
+    phases = [e["phase"] for e in events]
+    assert phases[0] == "reading" and "matching" in phases and "planned" in phases
+    filling = [e for e in events if e["phase"] == "filling"]
+    assert [e["label"] for e in filling] == ["First", "Second", "Third"]
+    assert [e["done"] for e in filling] == [0, 1, 2]
+    assert filling[0]["remaining"] == 3

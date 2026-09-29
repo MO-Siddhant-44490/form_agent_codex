@@ -260,6 +260,9 @@ def start_fill(st, session, loop, fact_items: list[dict], send) -> None:
     """Fill the connected tab from the profile, auto-repair anything the site
     flags, and report filled fields, questions, and the live form state."""
 
+    def progress(event: dict) -> None:
+        asyncio.run_coroutine_threadsafe(send({"type": "fill_progress", **event}), loop)
+
     def work(transport):
         result = run_fill(
             transport,
@@ -267,7 +270,9 @@ def start_fill(st, session, loop, fact_items: list[dict], send) -> None:
             mapper=st.mapper,
             memory=st.memory,
             repair=_field_repairer(st),
+            progress=progress,
         )
+        progress({"phase": "checking", "done": len(result.filled_fields)})
         auto_repair(st, transport, session, fact_items)
         observation = _observe_quietly(transport)
         _trace(

@@ -43,6 +43,24 @@
   .card .kv { display: flex; justify-content: space-between; gap: .5rem; padding: .12rem 0; }
   .card .kv .k { color: var(--muted); }
   .card .kv.review .v { color: #b45309; }
+  .progress { align-self: stretch; background: #f8fafc; border: 1px solid var(--line); border-radius: 10px; padding: .6rem .7rem; font-size: 12px; }
+  .progress .p-head { display: flex; align-items: center; gap: .45rem; }
+  .progress .p-title { font-size: 13px; flex: 1; }
+  .progress .p-clock { color: var(--muted); font-variant-numeric: tabular-nums; }
+  .progress .spinner { width: 14px; height: 14px; border-radius: 50%; border: 2px solid #cfe0f3; border-top-color: var(--brand); animation: spin .8s linear infinite; flex: none; }
+  .progress .p-bar { height: 6px; background: #e5edf6; border-radius: 999px; overflow: hidden; margin: .5rem 0 .35rem; position: relative; }
+  .progress .p-fill { height: 100%; width: 0; background: var(--brand); border-radius: 999px; transition: width .35s ease; }
+  .progress .p-bar.indeterminate .p-fill { position: absolute; width: 35%; animation: slide 1.2s ease-in-out infinite; }
+  .progress .p-row { display: flex; justify-content: space-between; gap: .5rem; color: var(--muted); }
+  .progress .p-detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
+  .progress .p-count { flex: none; font-variant-numeric: tabular-nums; }
+  .progress .p-log { list-style: none; margin: .4rem 0 0; padding: 0; color: var(--muted); }
+  .progress .p-log li { padding: .08rem 0; }
+  .progress .p-log li.retry { color: #b45309; }
+  .progress .p-log li.ok { color: #2f7a4b; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes slide { 0% { left: -35%; } 100% { left: 100%; } }
+  @media (prefers-reduced-motion: reduce) { .progress .spinner, .progress .p-bar.indeterminate .p-fill { animation: none; } }
 </style>
 </head>
 <body>

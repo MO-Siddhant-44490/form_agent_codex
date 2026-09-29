@@ -28,7 +28,7 @@ submits a form — the human always reviews first.
 | **Phase 3** — attachment library → auto-upload files into file fields | ⏳ Not started |
 | Broaden Textract fallback recognizer (`extract.py`) | ⏳ Optional (VLM is now primary) |
 
-**Tests:** backend 275 passed (+10 browser integration) · extension 106 passed · contracts no drift.
+**Tests:** backend 276 passed (+10 browser integration) · extension 107 passed · contracts no drift.
 
 ---
 
@@ -213,6 +213,17 @@ Pushed through `a8b518a`; the last six are local.
   questions for already-filled fields were reported. Also: Yes/No questions
   take plain answers ("None" → No), and the VLM extractor keeps every stated
   fact, not only the 20 standard keys.
+- **Fill order + live progress (2026-09-29).** Fields were filled in the
+  mapper's resolution order (exact matches, then memory, then model), so the
+  cursor jumped around; library widgets (Select2) were also appended after the
+  DOM-order sort. Now the driver walks the page top to bottom and perception
+  sorts after widget merges. The driver streams progress (`fill_progress`:
+  reading / matching / planned / filling "label" n of N / retrying /
+  next_page / checking) to a live card in the side panel (spinner, bar,
+  current field, recently filled fields, elapsed time); each field is scrolled
+  into view and briefly outlined on the page as it is filled. The final screen
+  shows one card per field, human wording, Tick it / Leave it for consents,
+  and pickers already showing the value count as done.
 - **Reliability + filling like a person (2026-09-29).** 6 of 10 real fills on
   the Vipassana form had failed with no trace. Cause: when the backend asked
   the extension to read a page that was mid-reload, the extension either

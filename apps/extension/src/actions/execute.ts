@@ -15,6 +15,7 @@ import { isVisible } from "../perception/visibility";
 import { elWindow, isFormControl, isInputEl, isSelectEl } from "./dom-types";
 import { fireInputEvents, focusThen, setNativeValue } from "./events";
 import { resolveTarget, type Resolved } from "./resolve";
+import { spotlight } from "./spotlight";
 
 function result(
   action: BrowserAction,
@@ -41,6 +42,8 @@ function failed(
 }
 
 const TEXTUAL_KINDS = new Set(["SET_TEXT", "SET_NUMBER", "SET_DATE", "SELECT_OPTION"]);
+// Actions that fill a field (get the on-page spotlight); not clicks/navigation.
+const FILL_KINDS = new Set([...TEXTUAL_KINDS, "SET_CHECKBOX", "SET_RADIO"]);
 
 export async function executeAction(doc: Document, action: BrowserAction): Promise<ActionResult> {
   switch (action.kind) {
@@ -88,6 +91,13 @@ async function executeTargeted(doc: Document, action: BrowserAction): Promise<Ac
 
   const resolved = resolveTarget(doc, action.target);
   if (resolved.kind === "not-found") return failed(action, resolved.detail);
+  if (FILL_KINDS.has(action.kind)) {
+    spotlight(
+      resolved.kind === "radio-group"
+        ? (resolved.radios[0]?.closest("fieldset, [role=radiogroup], .form-group, div") ?? resolved.radios[0])
+        : resolved.element,
+    );
+  }
   if (resolved.kind === "aria-widget") return await executeAriaWidget(doc, action, resolved);
 
   const value = action.resolved_value;
@@ -365,6 +375,7 @@ async function executeCombobox(doc: Document, action: BrowserAction): Promise<Ac
 
   const el = combo.element;
   const win = elWindow(el);
+  spotlight(el);
 
   // Custom dropdowns (Select2/Chosen/selectize) are backed by a hidden native
   // <select>.

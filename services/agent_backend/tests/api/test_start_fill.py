@@ -51,11 +51,15 @@ def test_start_fill_drives_the_fill_and_returns_a_result():
         # Act as the extension: answer observe/execute envelopes until the
         # backend sends the fill_result.
         result = None
-        for _ in range(50):
+        progress = []
+        for _ in range(80):
             msg = ws.receive_json()
             if msg.get("type") == "fill_result":
                 result = msg
                 break
+            if msg.get("type") == "fill_progress":
+                progress.append(msg)
+                continue
             payload = msg["payload"]
             reply = {
                 "protocol_version": PROTOCOL_VERSION,
@@ -76,6 +80,10 @@ def test_start_fill_drives_the_fill_and_returns_a_result():
             ws.send_json(reply)
 
     assert result is not None, "backend never sent a fill_result"
+    # Live progress streamed while filling, in page order.
+    filling = [p["label"] for p in progress if p["phase"] == "filling"]
+    assert filling == ["Full name", "Email"]
+    assert progress[0]["phase"] == "reading" and progress[-1]["phase"] == "checking"
     assert result["outcome"] == "COMPLETED"
     assert set(result["filled"]) == {"full-name", "email"}
     # The form was actually filled in the (mock) browser.

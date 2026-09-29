@@ -101,3 +101,20 @@ describe("Select2-style combobox backed by a hidden native select", () => {
     expect(select.value).toBe("MH");  // matched by option text
   });
 });
+
+
+describe("library widgets keep their place in the fill order", () => {
+  it("a Select2 dropdown between two inputs is perceived between them", async () => {
+    const { discoverFields } = await import("../../src/perception/fields");
+    document.body.innerHTML = `
+      <label for="zip">PIN</label><input id="zip" type="text">
+      <label for="st">State</label>
+      <select id="st" name="state" class="select2-hidden-accessible" aria-hidden="true" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">
+        <option value="">- Select -</option><option value="TN">Tamil Nadu</option></select>
+      <span class="select2 select2-container"><span class="select2-selection" role="combobox" aria-labelledby="st-label" tabindex="0"></span></span>
+      <label for="email">Email</label><input id="email" type="email">`;
+    const ids = discoverFields(document).map((f) => f.field_id);
+    expect(ids.indexOf("st")).toBeGreaterThan(ids.indexOf("zip"));
+    expect(ids.indexOf("st")).toBeLessThan(ids.indexOf("email"));
+  });
+});

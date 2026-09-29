@@ -26,6 +26,7 @@ from form_contracts import (
     UserQuestion,
 )
 
+from .adapt import widget_shows
 from .grounding import autocomplete_fact
 from .memory import MappingMemory, field_signature, site_key
 from .model_gateway.base import (
@@ -217,6 +218,9 @@ def _assign(
         matched = match_option(fact.value, field.options, field.option_labels)
         if matched is not None:
             return Assignment(field=field, fact=fact, value=matched, checked=None, source=source)
+        if widget_shows(field, fact.value):
+            # The picker already displays this value: nothing to ask or do.
+            return Assignment(field=field, fact=fact, value=fact.value, checked=None, source=source)
         return _question(
             QuestionKind.AMBIGUOUS_MAPPING,
             field,
@@ -265,12 +269,15 @@ class DeterministicMapper:
                 continue
             fact = match_fact(form_field, facts_by_key)
             if fact is None:
-                if form_field.required:
+                # A consent box is not a missing fact: the panel offers the user
+                # an explicit Tick it / Leave it instead of a free-text question.
+                if form_field.required and form_field.purpose is not FieldPurpose.CONSENT:
+                    label = form_field.label or form_field.accessible_name or form_field.field_id
                     outcome.questions.append(
                         _question(
                             QuestionKind.MISSING_FACT,
                             form_field,
-                            f"No fact for required field {form_field.label or form_field.field_id}",
+                            f"What should I put for “{label}”? It isn't in your profile.",
                         )
                     )
                 continue
