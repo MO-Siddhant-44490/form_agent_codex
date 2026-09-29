@@ -332,6 +332,31 @@ def _resolve_field(snapshot: list[dict], ref: str) -> str | None:
     return None
 
 
+def _continue_flow(st, transport, session, fact_items, payload: dict) -> dict:
+    """After the user answered or corrected something mid-form, carry on the
+    way a person would: fill whatever is still fillable and press "Next" —
+    instead of stopping after the one edit. Only when the page has a "Next"
+    control (a multi-step flow); the last page is left for the user to submit."""
+    try:
+        observation = transport.observe()
+    except Exception:  # noqa: BLE001
+        return payload
+    if not any(n.kind.value == "next" for n in observation.navigation):
+        return payload
+    result = run_fill(
+        transport,
+        facts_from_payload(fact_items),
+        mapper=st.mapper,
+        memory=st.memory,
+        repair=_field_repairer(st),
+    )
+    cont = _fill_payload(result, _reperceive(st, transport, session.run_id))
+    reply = payload.get("reply") or ""
+    moved = "navigation did not advance" not in (result.detail or "")
+    cont["reply"] = (reply + (" Continuing with the form." if moved else "")).strip()
+    return {**payload, **cont, "applied": payload.get("applied", [])}
+
+
 def _edit(st, transport, session, plan_reply: str, fact_items, keys, bindings=None) -> dict:
     """Apply a targeted edit (facts `keys`, plus explicit field<-fact `bindings`),
     auto-repair, and build the honest result envelope."""
@@ -402,6 +427,8 @@ def chat(st, session, loop, text: str, fact_items: list[dict], send, history=Non
             # must not silently corrupt the profile.
             unresolved = set(payload["unresolved"])
             payload["applied"] = [u for u in updates if u["key"] not in unresolved]
+            if payload.get("filled") and not unresolved:
+                payload = _continue_flow(st, transport, session, merged, payload)
         elif any(o.op == "refill" for o in plan.ops):
             result = run_fill(
                 transport, facts_from_payload(fact_items), mapper=st.mapper, memory=st.memory
@@ -438,7 +465,7 @@ def bind(st, session, loop, field_id: str, key: str, fact_items: list[dict], sen
                 st, transport, session, f"Using {key} for {label}.", fact_items, {key}, {fid: key}
             )
         )
-        return payload
+        return _continue_flow(st, transport, session, fact_items, payload)
 
     _run_in_worker(st, session, loop, send, work, event="chat")
 
@@ -467,7 +494,7 @@ def set_field(st, session, loop, field_id: str, value: str, fact_items: list[dic
         facts = [*fact_items, {"key": key, "value": value}]
         payload = {"type": "chat_result", "applied": []}
         payload.update(_edit(st, transport, session, f"Set {label}.", facts, {key}, {fid: key}))
-        return payload
+        return _continue_flow(st, transport, session, fact_items, payload)
 
     _run_in_worker(st, session, loop, send, work, event="chat")
 

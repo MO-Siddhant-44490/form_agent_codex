@@ -68,7 +68,8 @@ class ExtensionPlaywrightTransport:
         self._worker = workers[0] if workers else self._context.wait_for_event("serviceworker")
 
         page = self._context.new_page()
-        page.goto(self._fixture_url)
+        # DOM is enough; heavy sites (analytics, ads) may never fire "load".
+        page.goto(self._fixture_url, wait_until="domcontentloaded", timeout=60000)
         # The site may redirect or append query parameters; bind to the tab we
         # actually opened (its final URL), not the URL we asked for.
         state = self._worker.evaluate(

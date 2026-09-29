@@ -160,6 +160,13 @@ def date_candidates(field: FormField, value: str) -> list[str]:
         return [d.isoformat()]
     hint = _hint_text(field).lower()
     wanted = [fmt for key, fmt in _DATE_FORMATS.items() if key in hint]
+    if field.input_type in ("tel", "number") or (field.input_mode or "") in ("numeric", "tel"):
+        # A numeric-keypad date box is an input MASK: it wants the digits and
+        # inserts its own separators. Day-first unless the field says otherwise.
+        month_first = any(f.startswith("%m") for f in wanted)
+        digits = d.strftime("%m%d%Y" if month_first else "%d%m%Y")
+        masked = [d.strftime(f) for f in wanted] or [d.strftime("%d-%m-%Y"), d.strftime("%d/%m/%Y")]
+        return _unique([*masked, digits, *(d.strftime(f) for f in _DATE_FORMATS.values()), value])
     rest = [fmt for fmt in _DATE_FORMATS.values() if fmt not in wanted]
     return _unique([d.strftime(f) for f in wanted] + [d.strftime(f) for f in rest] + [value])
 
@@ -169,10 +176,9 @@ def _looks_like_date_field(field: FormField, fact_key: str | None) -> bool:
         return True
     text = _hint_text(field).lower()
     return (
-        "date" in text
-        or "dob" in text
+        any(w in text for w in ("date", "dob", "birth", "yyyy"))
         or any(k in text for k in _DATE_FORMATS)
-        or bool(fact_key and "date" in fact_key)
+        or bool(fact_key and ("date" in fact_key or "dob" in fact_key or "birth" in fact_key))
     )
 
 
@@ -266,10 +272,12 @@ def candidates(
     radios, checkboxes) are returned unchanged — option matching handles them."""
     if value is None or field.input_type not in _TEXTUAL or field.value_redacted:
         return [value] if value is not None else []
-    if is_phone_field(field, fact_key):
-        base = phone_candidates(field, value, has_country_code_picker(observation))
-    elif _looks_like_date_field(field, fact_key) and _parse_date(value) is not None:
+    # A date wins over "phone": masked date inputs are often type="tel" (for the
+    # numeric keypad), and a date value must never be reshaped as a number.
+    if _looks_like_date_field(field, fact_key) and _parse_date(value) is not None:
         base = date_candidates(field, value)
+    elif is_phone_field(field, fact_key):
+        base = phone_candidates(field, value, has_country_code_picker(observation))
     elif field.input_type == "email":
         base = _unique([value.strip(), value.strip().lower()])
     else:
@@ -345,3 +353,17 @@ def widget_shows(field: FormField, value: str | None) -> bool:
 
     shown, want = squash(field.label or field.accessible_name or ""), squash(value)
     return len(want) >= 2 and want in shown
+
+
+def site_normalized(typed: str, shown: str | None) -> bool:
+    """The site reformatted what was typed — an input mask inserting
+    separators ("23091988" -> "23-09-1988"), a case change ("ANANYA IYER"),
+    trimmed spaces — keeping exactly the same letters and digits in order.
+    A person would accept that as filled."""
+    if not shown or not typed:
+        return False
+
+    def squash(text: str) -> str:
+        return "".join(ch for ch in text.lower() if ch.isalnum())
+
+    return bool(squash(typed)) and squash(typed) == squash(shown)

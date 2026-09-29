@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>Term plan quote (masked inputs, same-URL steps)</title>
+<style>
+  body { font-family: sans-serif; max-width: 480px; margin: 2rem auto; }
+  .field { margin: 1rem 0; } label { display: block; margin-bottom: .3rem; }
+  input[type=text], input[type=tel] { width: 100%; padding: .5rem; }
+  .err { color: #c00; font-size: 12px; min-height: 1em; }
+  [hidden] { display: none !important; }
+</style></head>
+<body>
+<h1>Get a term plan quote</h1>
+
+<section id="step1">
+  <div class="field"><label for="nameAdd">Your Name</label>
+    <input id="nameAdd" name="nameAdd" type="text" autocomplete="off"><div class="err" id="nameErr"></div></div>
+  <div class="field"><label for="dob">Date of Birth</label>
+    <input id="dob" name="dob" type="tel" placeholder="DD-MM-YYYY" autocomplete="off"><div class="err" id="dobErr"></div></div>
+  <button type="button" id="continue1">Continue</button>
+</section>
+
+<section id="step2" hidden>
+  <fieldset><legend>Gender</legend>
+    <label><input type="radio" name="gender" value="M"> Male</label>
+    <label><input type="radio" name="gender" value="F"> Female</label>
+  </fieldset>
+  <div class="field"><label for="mobile">Mobile number</label>
+    <input id="mobile" name="mobile" type="tel" maxlength="10" placeholder="Enter 10-digit mobile number"><div class="err" id="mobErr"></div></div>
+  <button type="button" id="continue2">Continue</button>
+</section>
+
+<section id="step3" hidden><h2>Plans for you</h2><p>Review your quote.</p></section>
+
+<script>
+  // The site's own behaviour, as on real quote funnels:
+  const name = document.getElementById('nameAdd');
+  name.addEventListener('input', () => { name.value = name.value.toUpperCase(); });           // normalises case
+  const dob = document.getElementById('dob');
+  dob.addEventListener('input', () => {                                                    // DD-MM-YYYY input mask
+    const d = dob.value.replace(/\D/g, '').slice(0, 8);
+    dob.value = [d.slice(0, 2), d.slice(2, 4), d.slice(4, 8)].filter(Boolean).join('-');
+  });
+  const validDob = () => /^\d{2}-\d{2}-\d{4}$/.test(dob.value) && +dob.value.slice(0, 2) <= 31 && +dob.value.slice(3, 5) <= 12;
+  dob.addEventListener('blur', () => { document.getElementById('dobErr').textContent = validDob() ? '' : 'Enter a valid date of birth'; });
+  document.getElementById('continue1').addEventListener('click', () => {
+    const okName = name.value.trim().split(/\s+/).length >= 2;
+    document.getElementById('nameErr').textContent = okName ? '' : 'Please enter your full name';
+    if (okName && validDob()) { document.getElementById('step1').hidden = true; document.getElementById('step2').hidden = false; }
+  });
+  document.getElementById('continue2').addEventListener('click', () => {
+    const m = document.getElementById('mobile').value;
+    const ok = /^[6-9]\d{9}$/.test(m) && document.querySelector('input[name=gender]:checked');
+    document.getElementById('mobErr').textContent = ok ? '' : 'Enter a valid 10 digit mobile number';
+    if (ok) { document.getElementById('step2').hidden = true; document.getElementById('step3').hidden = false; }
+  });
+</script>
+</body></html>

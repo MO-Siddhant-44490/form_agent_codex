@@ -196,3 +196,47 @@ def test_chat_set_fact_that_does_not_land_is_not_reported_as_applied():
     assert result["applied"] == []  # the panel must not store 'Xyz'
     assert result["unresolved"] == ["gender"]
     assert "couldn't set" in result["reply"]
+
+
+def test_answering_a_question_mid_flow_continues_to_the_next_page():
+    """The flow must not end after the user answers: once the missing field is
+    set, the agent carries on — fills what it can and presses Next."""
+    gateway = FakeModelAdapter()
+    state = AppState(
+        repo=Repository(make_engine()),
+        auth=DevTokenAuth(),
+        documents=DocumentStore(),
+        facts=FactStore(),
+        mapper=ModelAssistedMapper(gateway),
+    )
+    app = create_app(state)
+    run_id = "run-continue"
+    state.repo.create_run(run_id)
+    token = state.auth.mint(run_id)
+    browser = FakeTransport(
+        pages=[
+            [
+                FakeField("full-name", "text", "full_name", "Full name", required=True),
+                FakeField("ref", "text", "ref_code", "Referral code", required=True),
+            ],
+            [FakeField("email", "email", "email", "Email", required=True)],
+        ]
+    )
+    facts = [
+        {"key": "full_name", "value": "Ananya Prakash Iyer"},
+        {"key": "email", "value": "ananya.iyer@examplemail.in"},
+    ]
+    client = TestClient(app)
+    with client.websocket_connect(f"/ws/{run_id}?token={token}") as ws:
+        ws.send_json({"type": "hello", "origin": "http://fake.test", "tab_id": 1})
+        ws.send_json({"type": "start_fill", "facts": facts})
+        first = _drive(ws, browser, run_id, "fill_result")
+        assert first["outcome"] == "NEEDS_USER"
+        assert any(q["field_id"] == "ref" for q in first["questions"])
+        assert browser.current_page == 0  # blocked on page 1
+
+        ws.send_json({"type": "set_field", "field_id": "ref", "value": "VIP2026", "facts": facts})
+        after = _drive(ws, browser, run_id, "chat_result")
+    assert browser.current_page == 1  # it pressed Next by itself
+    assert "email" in after["filled"]
+    assert "Continuing" in after["reply"]

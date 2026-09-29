@@ -33,7 +33,7 @@ from form_contracts import (
     VerificationStatus,
 )
 
-from .adapt import adapt, candidates, plausible_reshape, widget_shows
+from .adapt import adapt, candidates, plausible_reshape, site_normalized, widget_shows
 from .mapper import Assignment, DeterministicMapper, Mapper, MappingOutcome, user_binding
 from .memory import MappingMemory, field_signature, site_key
 from .planner import assignment_satisfied, build_action_for, normalize_value
@@ -355,6 +355,14 @@ def apply_edits(
             )
             if outcome.result.status == "EXECUTED" and verified:
                 return "ok"
+            shown = next((f for f in observation.fields if f.field_id == field_id), None)
+            if (
+                outcome.result.status == "EXECUTED"
+                and shown is not None
+                and not shown.validation_message
+                and site_normalized(value_now or "", shown.current_value)
+            ):
+                return "ok"  # the site reformatted it (mask, case); same value
             # The field may cap length (HTML maxlength or a JS limiter). If it
             # accepted a prefix of our value, that value IS applied — accept it
             # rather than failing on the length mismatch.
@@ -674,6 +682,20 @@ def run_fill(
             nav = _find_next_control(observation)
             if nav is None:
                 return _finish(result, mapping, blocked_fields, transport, verify)
+            # Like a person: don't press "Next" while this page still has a
+            # required field only the user can fill (a question, a captcha) —
+            # the site would refuse it anyway. Stop here, ask, and the flow
+            # continues from this page once the user has answered.
+            waiting = _required_empty(observation)
+            if waiting:
+                return _finish(
+                    result,
+                    mapping,
+                    blocked_fields,
+                    transport,
+                    verify,
+                    stopped=f"waiting for you on this page ({', '.join(waiting[:3])})",
+                )
             if len(visited_pages) > budgets.max_pages:
                 result.outcome = RunOutcome.BUDGET_EXHAUSTED
                 result.detail = f"page budget ({budgets.max_pages}) exhausted"
@@ -828,6 +850,22 @@ def run_fill(
 
         if verification is None:
             continue
+        # The site reformatted what we typed (an input mask, a case change) and
+        # is not complaining: that IS success — accept the site's form of it.
+        if verification.status is not VerificationStatus.SUCCESS and _textual(
+            assignment, fresh_field
+        ):
+            shown = next((f for f in observation.fields if f.field_id == field_id), None)
+            if (
+                shown is not None
+                and not shown.validation_message
+                and verification.failure_class is FailureClass.VALUE_MISMATCH
+                and site_normalized(sent or "", shown.current_value)
+            ):
+                verification = verification.model_copy(
+                    update={"status": VerificationStatus.SUCCESS, "failure_class": None}
+                )
+                sent = shown.current_value
         if verification.status is VerificationStatus.SUCCESS:
             result.filled_fields.append(field_id)
             if sent is not None and assignment.checked is None:
@@ -990,6 +1028,17 @@ def _rejection_prompt(field, observation, verification, tried) -> str:
     if said:
         return f"The site rejected “{label}”: “{said}”.{shown} What should I enter?"
     return f"I couldn't fill “{label}” ({verification.failure_class}).{shown} What should I enter?"
+
+
+def _required_empty(observation: PageObservation) -> list[str]:
+    """Labels of required fields on this page that are still empty."""
+    from .snapshot import is_filled
+
+    return [
+        f.label or f.accessible_name or f.field_id
+        for f in observation.fields
+        if f.required and f.visible and not f.disabled and not is_filled(f)
+    ]
 
 
 def _combobox_shows(field: FormField, target: str | None) -> bool:

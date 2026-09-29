@@ -28,7 +28,7 @@ submits a form — the human always reviews first.
 | **Phase 3** — attachment library → auto-upload files into file fields | ⏳ Not started |
 | Broaden Textract fallback recognizer (`extract.py`) | ⏳ Optional (VLM is now primary) |
 
-**Tests:** backend 276 passed (+10 browser integration) · extension 107 passed · contracts no drift.
+**Tests:** backend 277 passed (+11 browser integration) · extension 107 passed · contracts no drift.
 
 ---
 
@@ -213,6 +213,17 @@ Pushed through `a8b518a`; the last six are local.
   questions for already-filled fields were reported. Also: Yes/No questions
   take plain answers ("None" → No), and the VLM extractor keeps every stated
   fact, not only the 20 standard keys.
+- **policybazaar term-life quote (2026-09-29).** The live site is behind
+  Akamai bot protection (403 for automated browsers), so it was reproduced as
+  a fixture (`apps/fixtures/masked-form`). Three generic bugs: (1) a date box
+  of `type="tel"` (an input mask) was adapted as a PHONE number — dates now
+  take precedence, and numeric-keypad date boxes get DD-MM-YYYY / DDMMYYYY
+  first; (2) a site reformatting what was typed (mask separators, upper-case
+  name) was treated as a mismatch — same letters/digits in order now counts as
+  filled (`site_normalized`); (3) after the user answered a question the flow
+  ended — answers, bindings and chat edits now resume the fill and press Next
+  (`_continue_flow`), and the driver no longer presses Next while a required
+  field on the page is still empty (it stops, asks, and continues after).
 - **Fill order + live progress (2026-09-29).** Fields were filled in the
   mapper's resolution order (exact matches, then memory, then model), so the
   cursor jumped around; library widgets (Select2) were also appended after the

@@ -465,3 +465,55 @@ def test_role_based_widgets_fill_in_document_order_via_extension(fixture_server)
         }
     finally:
         transport.close()
+
+
+def test_masked_date_uppercased_name_and_same_url_steps_via_extension(fixture_server):
+    """The policybazaar pattern (real site blocks automation, so a faithful
+    fixture): a DD-MM-YYYY input mask on a type=tel date box, a name box that
+    upper-cases what is typed, and "Continue" steps on the same URL. The agent
+    must type a mask-friendly date, accept the site's reformatting, and walk
+    every step without asking."""
+    from form_contracts import DocumentFact, FactStatus, FactValueType, Sensitivity
+
+    def fact(key, value, vt=FactValueType.STRING):
+        return DocumentFact(
+            fact_id=f"f-{key}",
+            key=key,
+            value=value,
+            value_type=vt,
+            confidence=1.0,
+            sensitivity=Sensitivity.PUBLIC,
+            status=FactStatus.USER_PROVIDED,
+        )
+
+    facts = [
+        fact("nameAdd", "Ananya Prakash Iyer"),
+        fact("dob", "1988-09-23", FactValueType.DATE),
+        fact("gender", "Female"),
+        fact("mobile", "+91 99401 26718"),
+    ]
+    transport = ExtensionPlaywrightTransport(
+        EXTENSION_DIST, f"http://127.0.0.1:{FIXTURE_PORT}/masked-form/"
+    )
+    try:
+        result = run_fill(transport, facts)
+        assert result.questions == [], [q.prompt for q in result.questions]
+        dom = transport.page_eval(
+            """() => ({
+                name: document.getElementById('nameAdd').value,
+                dob: document.getElementById('dob').value,
+                gender: document.querySelector('input[name=gender]:checked')?.value,
+                mobile: document.getElementById('mobile').value,
+                step3: !document.getElementById('step3').hidden,
+            })"""
+        )
+        assert dom == {
+            "name": "ANANYA PRAKASH IYER",
+            "dob": "23-09-1988",
+            "gender": "F",
+            "mobile": "9940126718",
+            "step3": True,
+        }
+        assert set(result.filled_fields) == {"nameAdd", "dob", "radio-group:gender", "mobile"}
+    finally:
+        transport.close()
