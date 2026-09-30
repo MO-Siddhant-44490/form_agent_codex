@@ -4,6 +4,7 @@ policy gate -> act -> verify, with hard budgets and classified outcomes
 of what proposed it; blocked fields are reported, never silently skipped."""
 
 import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -26,6 +27,7 @@ from form_contracts import (
     RejectionReason,
     RiskLevel,
     RunOutcome,
+    Sensitivity,
     TabSession,
     UploadFileRef,
     UserQuestion,
@@ -39,7 +41,7 @@ from .memory import MappingMemory, field_signature, site_key
 from .planner import assignment_satisfied, build_action_for, normalize_value
 from .policy import check_action
 from .recovery import RecoveryDecision, RecoveryPlanner
-from .transport import BrowserTransport, resilient
+from .transport import BrowserTransport, PageUnavailable, resilient
 from .validation import ValidationReport, validate_form
 
 
@@ -55,6 +57,9 @@ class DriverBudgets:
     # After "Next", how many settle-and-reobserve rounds to wait for a full
     # page load to land before concluding the click did not advance.
     max_navigation_waits: int = 8
+    # Wall-clock cap for one fill (invariant 12): a page that keeps answering
+    # slowly must still end with a classified outcome.
+    max_wall_s: float = 600.0
     navigation_wait_s: float = 1.0  # pause between those rounds (~8 s total)
 
 
@@ -105,7 +110,7 @@ def _navigation_action(
         target=control.target,
         expected_effect=ExpectedEffect(navigation_expected=True),
         risk=RiskLevel.LOW,
-        idempotency_key=f"{session.run_id}:nav:{observation.page_fingerprint}",
+        idempotency_key=f"{session.run_id}:nav:{observation.page_fingerprint}:{sequence_number}",
         source_observation_seq=observation.observation_seq,
     )
 
@@ -126,7 +131,7 @@ def _dismiss_action(
         target=dialog.dismiss_target,
         expected_effect=ExpectedEffect(dialog_dismissed=True),
         risk=RiskLevel.LOW,
-        idempotency_key=f"{session.run_id}:dismiss:{dialog.dialog_id}",
+        idempotency_key=f"{session.run_id}:dismiss:{dialog.dialog_id}:{sequence_number}",
         source_observation_seq=observation.observation_seq,
     )
 
@@ -149,7 +154,7 @@ def _upload_action(
         upload_file=upload,
         expected_effect=ExpectedEffect(field_value=upload.filename),
         risk=RiskLevel.MEDIUM,
-        idempotency_key=f"{session.run_id}:{field.field_id}:{upload.filename}",
+        idempotency_key=f"{session.run_id}:{field.field_id}:{upload.filename}:{sequence_number}",
         source_observation_seq=observation.observation_seq,
     )
 
@@ -295,7 +300,7 @@ def apply_edits(
 
     session = transport.attach()
     observation = transport.observe()
-    seq = 0
+    base = seq = _sequence_floor(transport)
 
     def remember(field_id: str, assignment) -> None:
         if memory is None or assignment.fact.key.startswith("field:"):
@@ -387,7 +392,7 @@ def apply_edits(
             mapping.questions.append(bound)
     addressed: set[str] = set()
     for field_id, assignment in list(mapping.assignments.items()):
-        if assignment.fact.key not in changed_keys or seq >= max_actions:
+        if assignment.fact.key not in changed_keys or seq - base >= max_actions:
             continue
         addressed.add(assignment.fact.key)
         status = fill(field_id, assignment)
@@ -420,7 +425,7 @@ def apply_edits(
     # — required fields now mappable to a fact but not yet satisfied.
     mapping = mapper.map(observation, facts_by_key)
     for field_id, assignment in list(mapping.assignments.items()):
-        if field_id in result.filled_fields or seq >= max_actions:
+        if field_id in result.filled_fields or seq - base >= max_actions:
             continue
         fresh = next((f for f in observation.fields if f.field_id == field_id), None)
         if fresh is None or not fresh.required:
@@ -433,7 +438,22 @@ def apply_edits(
     return result
 
 
-def run_fill(
+def run_fill(*args, **kwargs) -> DriveResult:
+    """Fill every approved-mappable field on the attached page (see _run_fill).
+    A page that stops responding — tab closed, blocked by a native dialog,
+    extension unreachable — ends the run with a classified outcome and the
+    partial result, never an exception (invariant 12)."""
+    holder: dict = {}
+    try:
+        return _run_fill(*args, _holder=holder, **kwargs)
+    except PageUnavailable as error:
+        result = holder.get("result") or DriveResult(outcome=RunOutcome.NEEDS_USER, steps_used=0)
+        result.outcome = RunOutcome.NEEDS_USER
+        result.detail = f"the page stopped responding ({error}); nothing was submitted"
+        return result
+
+
+def _run_fill(
     transport: BrowserTransport,
     facts: list[DocumentFact],
     budgets: DriverBudgets | None = None,
@@ -445,6 +465,7 @@ def run_fill(
     memory: MappingMemory | None = None,
     repair: "Callable[[FormField, str, str], str | None] | None" = None,
     progress: "Callable[[dict], None] | None" = None,
+    _holder: dict | None = None,
 ) -> DriveResult:
     """`repair(field, rejected_value, site_error)` proposes a corrected value
     when the site rejects every deterministic reshape (model-backed in the app;
@@ -455,17 +476,21 @@ def run_fill(
     verification) — used to measure the value of the perceive-act-verify loop.
     recover=False disables bounded recovery (a failure blocks the field
     immediately) — used to measure recovery's contribution."""
-    """Fill every approved-mappable field on the attached page, verifying
-    each action. Never submits (invariant 1)."""
     budgets = budgets or DriverBudgets()
     transport = resilient(transport)  # a page mid-reload is waited for, not fatal
     mapper = mapper or DeterministicMapper()
     facts_by_key = {f.key: f for f in facts}
     result = DriveResult(outcome=RunOutcome.FATAL_FAILURE, steps_used=0)
+    if _holder is not None:
+        _holder["result"] = result
 
     session = transport.attach()
     observation = transport.observe()
-    sequence = 0
+    sequence = _sequence_floor(transport)
+    # Per-call key scope: a later fill/refill of the same field with the same
+    # value in the SAME run is a new action, not a duplicate of this one; a
+    # redelivery within this call still dedupes (invariant 6).
+    scope = uuid.uuid4().hex[:8]
     retries: dict[str, int] = {}
     # Per-field recovery state staged for the NEXT attempt: a method hint the
     # executor honours (drive the widget UI / an alternate input method) and a
@@ -487,10 +512,12 @@ def run_fill(
     mapped_fingerprint: str | None = None
 
     def emit(phase: str, **detail) -> None:
-        """Live progress for the side panel. Best-effort: never fails a fill."""
+        """Live progress for the side panel. Best-effort: never fails a fill.
+        Callable details are computed only when someone is listening."""
         if progress is None:
             return
         try:
+            detail = {k: (v() if callable(v) else v) for k, v in detail.items()}
             progress({"phase": phase, "page": len(visited_pages) + 1, **detail})
         except Exception:  # noqa: BLE001
             pass
@@ -527,7 +554,14 @@ def run_fill(
     emit("reading", fields=len(observation.fields))
     stability_waits = 0
     final_settles = 0
+    started = time.monotonic()
     while result.steps_used < budgets.max_steps:
+        if time.monotonic() - started > budgets.max_wall_s:
+            result.outcome = RunOutcome.BUDGET_EXHAUSTED
+            result.detail = (
+                f"time budget ({int(budgets.max_wall_s)} s) exhausted; nothing was submitted"
+            )
+            return result
         # A login / MFA gate is the human's (invariant 2). A captcha on the page
         # is too — but only that box: the rest of the form is still filled, and
         # the captcha is reported as theirs to complete. Submission is never ours.
@@ -554,7 +588,8 @@ def run_fill(
                 mapping = None
             observation = new_obs
             continue
-        stability_waits = 0
+        if observation.dom_stable:
+            stability_waits = 0  # a page that never settles keeps its cap
 
         # Dismiss a blocking dialog / cookie banner before interacting with
         # the form. Bounded: each dialog is tried at most twice, then left
@@ -591,7 +626,7 @@ def run_fill(
             for question in mapping.questions:
                 if all(q.question_id != question.question_id for q in result.questions):
                     result.questions.append(question)
-            emit("planned", done=len(result.filled_fields), remaining=_remaining())
+            emit("planned", done=len(result.filled_fields), remaining=_remaining)
 
         # Next unsatisfied, unblocked assignment in the order the PAGE shows
         # fields (top to bottom) — not the order the mapper resolved them.
@@ -633,6 +668,8 @@ def run_fill(
                     result.questions = [
                         q for q in result.questions if q.field_id != upload_field.field_id
                     ]
+                else:
+                    blocked_fields.add(upload_field.field_id)  # tried once; don't resend the file
                 observation = up_outcome.observation or transport.observe()
                 continue
 
@@ -741,6 +778,19 @@ def run_fill(
             mapping = None
             final_settles = 0  # a new page gets its own cascade settles
             stability_waits = 0
+            # Positional field ids (field-3, aria:...:0) repeat across pages:
+            # nothing learned about page N's fields may leak onto page N+1's.
+            for per_field in (
+                accepted,
+                value_overrides,
+                tried,
+                repaired_values,
+                retries,
+                method_hints,
+            ):
+                per_field.clear()
+            blocked_fields.clear()
+            recovery = RecoveryPlanner()
             continue
 
         field_id, assignment, fresh_field = next_assignment
@@ -748,7 +798,7 @@ def run_fill(
             "filling",
             label=_label(fresh_field),
             done=len(result.filled_fields),
-            remaining=_remaining(),
+            remaining=_remaining,
             retry=field_id in tried,
         )
         sequence += 1
@@ -764,6 +814,7 @@ def run_fill(
             value_ref=f"fact://{assignment.fact.fact_id}",
             attempt=retries.get(field_id, 0),
             method_hint=method_hints.get(field_id),
+            key_scope=scope,
         )
 
         # Deterministic policy gate before dispatch (invariant: every action).
@@ -771,6 +822,15 @@ def run_fill(
         # recognised by the gate itself) plus model repairs already checked to
         # be plausible reshapes of the same fact.
         approved = {**mapping.approved_values(), **repaired_values}
+        if sent is not None and assignment.checked is None and field_id in mapping.assignments:
+            derived_here = (
+                sent == accepted.get(field_id)
+                or sent == value_overrides.get(field_id)
+                or sent
+                in candidates(fresh_field, assignment.value, assignment.fact.key, observation)
+            )
+            if derived_here:
+                approved[field_id] = sent  # a reshape of this fact, by construction
         decision = check_action(action, observation, approved)
         if decision.decision is PolicyDecisionKind.BLOCK:
             result.policy_decisions.append(decision)
@@ -789,6 +849,18 @@ def run_fill(
             result.detail = f"rejected: {outcome.result.rejection_reason} ({outcome.result.error})"
             return result
         if outcome.result.status == "DUPLICATE":
+            # The same key was already executed; if the field still isn't
+            # filled, the next attempt needs a new key — bounded, never a loop.
+            retries[field_id] = retries.get(field_id, 0) + 1
+            if retries[field_id] > budgets.max_retries_per_action + 2:
+                _block_with_question(
+                    result,
+                    blocked_fields,
+                    field_id,
+                    question_id=f"q-failed-{field_id}",
+                    kind=QuestionKind.AMBIGUOUS_MAPPING,
+                    prompt=f"I couldn't fill “{_label(fresh_field)}” — please fill it on the page.",
+                )
             observation = transport.observe()
             continue
         if outcome.result.status == "FAILED":
@@ -1066,8 +1138,8 @@ def _next_value(
     for c in candidates(field, assignment.value, assignment.fact.key, observation):
         if c not in tried:
             return _NextValue(c)
-    if repair is None:
-        return None
+    if repair is None or assignment.fact.sensitivity is Sensitivity.SENSITIVE:
+        return None  # a sensitive value is never sent to the model for repair
     try:
         proposal = repair(field, tried[-1], error)
     except Exception:  # noqa: BLE001 — a failed repair just means "ask the user"
@@ -1080,6 +1152,16 @@ def _next_value(
     if proposal in tried or not plausible_reshape(assignment.value, proposal):
         return None  # new content is not a repair; the user decides
     return _NextValue(proposal, repaired=True)
+
+
+def _sequence_floor(transport) -> int:
+    """Where this driver call's action numbers start: after the last number the
+    transport has sent on this connection (0 for a fresh one)."""
+    floor = getattr(transport, "sequence_floor", None)
+    try:
+        return int(floor()) if callable(floor) else 0
+    except Exception:  # noqa: BLE001
+        return 0
 
 
 def _await_navigation(
@@ -1103,12 +1185,6 @@ def _await_navigation(
         if i == max_waits:
             break
         time.sleep(pause_s)  # give a full page load time to land
-        try:
-            transport.execute(
-                _helper_action(before, session, ActionKind.WAIT_FOR_STABLE_PAGE, sequence + i + 1)
-            )
-        except Exception:  # noqa: BLE001 — the old document may be gone mid-load
-            pass
         try:
             candidate = transport.observe()
         except Exception:  # noqa: BLE001 — content script not yet in the new page

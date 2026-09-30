@@ -6,6 +6,7 @@ Runs in the FastAPI event loop; the orchestrator (sync) talks to it through
 a threadsafe bridge (WebSocketBrowserTransport)."""
 
 import asyncio
+import threading
 from dataclasses import dataclass, field
 
 from form_contracts import (
@@ -28,6 +29,12 @@ class ExtensionSession:
     _pending: dict[str, asyncio.Future] = field(default_factory=dict)
     _last_inbound_seq: int = -1
     request_counter: int = 0
+    # Highest action sequence number sent on this connection. Every driver call
+    # (fill, auto-repair, continue-after-answer) continues from here, so the
+    # extension's replay guard never sees numbers go backwards (invariant 8).
+    action_seq: int = 0
+    # Held while a panel operation drives this session (see _run_in_worker).
+    op_lock: threading.Lock = field(default_factory=threading.Lock)
 
     async def request(self, message_type: MessageType, payload: dict, timeout: float = 30.0):
         """Send a request envelope and await the correlated reply."""

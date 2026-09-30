@@ -52,6 +52,13 @@ export function widgetName(el: HTMLElement): string | null {
   return text(heading);
 }
 
+/** The name perception gives a role-based widget — also used by resolution, so
+ * both sides identify the same element. */
+export function ariaFieldName(el: HTMLElement, role: string): string | null {
+  if (role === "checkbox" || role === "switch") return accessibleName(el) ?? text(el);
+  return widgetName(el);
+}
+
 /** The question a *member* (one radio / one checkbox) belongs to. */
 function groupName(el: HTMLElement): string | null {
   const group = el.closest("[role='radiogroup'], [role='group'], [role='list'], fieldset, [role='listitem']");
@@ -170,7 +177,7 @@ export function detectAriaWidgets(doc: Document): { widgets: AriaWidget[]; unrec
     .filter((el) => !claimed.has(el) && !el.closest("[role='option'], [role='listbox']"))
     .forEach((el, i) => {
       const role = el.getAttribute("role") === "switch" ? "switch" : "checkbox";
-      const field = base(el, widgetId(el, role, i), role, "checkbox", accessibleName(el) ?? text(el));
+      const field = base(el, widgetId(el, role, i), role, "checkbox", ariaFieldName(el, role));
       field.checked = el.getAttribute("aria-checked") === "true";
       claimed.add(el);
       widgets.push({ el, field });
@@ -201,7 +208,9 @@ export function detectAriaWidgets(doc: Document): { widgets: AriaWidget[]; unrec
     .forEach((el, i) => {
       const multiline = el.getAttribute("aria-multiline") === "true";
       const field = base(el, widgetId(el, "textbox", i), "textbox", multiline ? "textarea" : "text", widgetName(el));
-      field.current_value = text(el);
+      // A secret typed into a custom text box never leaves the page (invariant 2).
+      field.value_redacted = field.purpose === "credential";
+      field.current_value = field.value_redacted ? null : text(el);
       claimed.add(el);
       widgets.push({ el, field });
     });

@@ -8,6 +8,7 @@ import { classifyPurpose, type FieldPurpose } from "./purpose";
 import { deepQueryAll } from "./shadow";
 import { detectComboboxes, detectDatePickers } from "./widgets";
 import { hasLayout, isVisible } from "./visibility";
+import { isHtmlEl, isInputEl, isSelectEl, isTextareaEl } from "../actions/dom-types";
 
 type Control = HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
 
@@ -33,12 +34,12 @@ export function purposeOf(el: Control): FieldPurpose {
  * A password-TYPE input is redacted whatever its purpose — a masked identifier
  * is fillable but its value is still not observed (only its length is). */
 export function isRedactedControl(el: Control, purpose: FieldPurpose): boolean {
-  return purpose === "credential" || (el instanceof HTMLInputElement && el.type === "password");
+  return purpose === "credential" || (isInputEl(el) && el.type === "password");
 }
 
 function inputType(el: Control): string {
-  if (el instanceof HTMLInputElement) return el.type;
-  if (el instanceof HTMLSelectElement) return el.type; // select-one | select-multiple
+  if (isInputEl(el)) return el.type;
+  if (isSelectEl(el)) return el.type; // select-one | select-multiple
   return "textarea";
 }
 
@@ -94,7 +95,7 @@ function customValidationError(el: Control): string | null {
   const err = container?.querySelector(
     "[class*='error' i], [class*='invalid' i], [role='alert'], .field-validation-error",
   );
-  if (err instanceof HTMLElement && isVisible(err)) {
+  if (isHtmlEl(err) && isVisible(err)) {
     const text = err.textContent?.trim();
     if (text) return text;
   }
@@ -122,7 +123,7 @@ const PATTERN_ATTRS = ["pattern", "data-val-regex-pattern", "data-parsley-patter
 const MAXLEN_ATTRS = ["data-val-length-max", "data-val-maxlength-max", "data-parsley-maxlength", "data-rule-maxlength", "ng-maxlength", "data-maxlength"];
 
 function declaredPattern(el: Control): string | null {
-  if (el instanceof HTMLSelectElement) return null;
+  if (isSelectEl(el)) return null;
   for (const attr of PATTERN_ATTRS) {
     const v = el.getAttribute(attr)?.trim();
     if (v) return v.replace(/^\/(.*)\/[a-z]*$/, "$1"); // "/^\d+$/" -> "^\d+$"
@@ -131,7 +132,7 @@ function declaredPattern(el: Control): string | null {
 }
 
 function declaredMaxLength(el: Control): number | null {
-  if ((el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) && el.maxLength >= 0) {
+  if ((isInputEl(el) || isTextareaEl(el)) && el.maxLength >= 0) {
     return el.maxLength;
   }
   for (const attr of MAXLEN_ATTRS) {
@@ -151,7 +152,7 @@ function baseField(el: Control, fieldId: string): FormField {
     input_type: inputType(el),
     label:
       explicitLabel(el) ??
-      (el instanceof HTMLInputElement && (el.type === "checkbox" || el.type === "radio")
+      (isInputEl(el) && (el.type === "checkbox" || el.type === "radio")
         ? adjacentText(el)
         : null),
     accessible_name: accessibleName(el),
@@ -159,7 +160,7 @@ function baseField(el: Control, fieldId: string): FormField {
     disabled: el.disabled,
     readonly: "readOnly" in el ? el.readOnly : false,
     visible: true,
-    checked: el instanceof HTMLInputElement && (el.type === "checkbox" || el.type === "radio")
+    checked: isInputEl(el) && (el.type === "checkbox" || el.type === "radio")
       ? el.checked
       : null,
     current_value: redacted ? null : currentValue(el),
@@ -167,10 +168,10 @@ function baseField(el: Control, fieldId: string): FormField {
     // A masked identifier's length lets a fill be verified without the value.
     value_length: redacted && !credential ? (el.value ?? "").length : null,
     purpose,
-    options: el instanceof HTMLSelectElement
+    options: isSelectEl(el)
       ? Array.from(el.options).map((o) => o.value)
       : null,
-    option_labels: el instanceof HTMLSelectElement
+    option_labels: isSelectEl(el)
       ? Array.from(el.options).map((o) => o.textContent?.trim() ?? o.value)
       : null,
     validation_message: credential ? null : validationMessage(el),
@@ -182,10 +183,10 @@ function baseField(el: Control, fieldId: string): FormField {
 }
 
 function currentValue(el: Control): string | null {
-  if (el instanceof HTMLInputElement && (el.type === "checkbox" || el.type === "radio")) {
+  if (isInputEl(el) && (el.type === "checkbox" || el.type === "radio")) {
     return null; // represented by `checked`
   }
-  if (el instanceof HTMLInputElement && el.type === "file") {
+  if (isInputEl(el) && el.type === "file") {
     // Report the selected file's name (not the fake C:\\fakepath prefix).
     const name = el.files?.[0]?.name;
     if (name) return name;
@@ -245,15 +246,15 @@ export function discoverFieldsWithReport(doc: Document): {
   const seenRadioGroups = new Set<string>();
 
   controls.forEach((el, index) => {
-    if (el instanceof HTMLInputElement && NON_FIELD_INPUT_TYPES.has(el.type)) return;
+    if (isInputEl(el) && NON_FIELD_INPUT_TYPES.has(el.type)) return;
     if (!isVisible(el)) return;
 
-    if (el instanceof HTMLInputElement && el.type === "radio" && el.name) {
+    if (isInputEl(el) && el.type === "radio" && el.name) {
       if (seenRadioGroups.has(el.name)) return;
       seenRadioGroups.add(el.name);
       const group = controls.filter(
         (c): c is HTMLInputElement =>
-          c instanceof HTMLInputElement &&
+          isInputEl(c) &&
           c.type === "radio" &&
           c.name === el.name &&
           isVisible(c),
@@ -272,8 +273,8 @@ export function discoverFieldsWithReport(doc: Document): {
 
   // Library widgets (Select2, date pickers) are merged in after discovery —
   // often wrapping a HIDDEN native control — so order must be decided after.
-  mergeComboboxes(doc, fields);
-  mergeDatePickers(doc, fields);
+  mergeComboboxes(doc, fields, elementOf);
+  mergeDatePickers(doc, fields, elementOf);
 
   // Document order across light DOM and open shadow roots (the same traversal
   // deepQueryAll uses), so the fill proceeds top to bottom as the user sees it.
@@ -286,12 +287,23 @@ export function discoverFieldsWithReport(doc: Document): {
   };
   const ranked = fields.map((f, i) => ({ f, i, pos: position(f) }));
   ranked.sort((a, b) => a.pos - b.pos || a.i - b.i);
+  // Every field must be addressable on its own: id-less controls sharing a
+  // name (a "lang" checkbox list) would otherwise all be "lang:checkbox".
+  const seenIds = new Map<string, number>();
+  for (const { f } of ranked) {
+    const n = seenIds.get(f.field_id) ?? 0;
+    seenIds.set(f.field_id, n + 1);
+    if (n > 0) {
+      f.field_id = `${f.field_id}#${n}`;
+      f.target = { ...f.target, field_id: f.field_id };
+    }
+  }
   return { fields: ranked.map((r) => r.f), unrecognized: aria.unrecognized };
 }
 
 // Enrich discovered fields (or add new ones) for ARIA comboboxes so the
 // planner sees them as option-bearing controls.
-function mergeComboboxes(doc: Document, fields: FormField[]): void {
+function mergeComboboxes(doc: Document, fields: FormField[], elementOf: Map<FormField, Element>): void {
   for (const combo of detectComboboxes(doc)) {
     const el = combo.element;
     const backing = combo.backingSelect;
@@ -307,7 +319,10 @@ function mergeComboboxes(doc: Document, fields: FormField[]): void {
       explicitLabel(el) ||
       accessibleName(el);
     const id = backing?.id || el.id || name || `combobox-${fields.length}`;
-    const existing = el.id ? fields.find((f) => f.field_id === el.id) : undefined;
+    // The widget's own element may already be a native field (an input with
+    // role=combobox): enrich that one — found by identity, not only by id —
+    // rather than listing the same control twice.
+    const existing = fields.find((f) => elementOf.get(f) === el) ?? (el.id ? fields.find((f) => f.field_id === el.id) : undefined);
     if (existing) {
       existing.input_type = "combobox";
       existing.options = options;
@@ -366,12 +381,12 @@ function mergeComboboxes(doc: Document, fields: FormField[]): void {
 
 // Enrich a custom date picker so it maps to a date fact and routes to the
 // calendar-popup executor path.
-function mergeDatePickers(doc: Document, fields: FormField[]): void {
+function mergeDatePickers(doc: Document, fields: FormField[], elementOf: Map<FormField, Element>): void {
   for (const picker of detectDatePickers(doc)) {
     const el = picker.element;
     const id = el.id || `datepicker-${fields.length}`;
     const nameAttr = el.getAttribute("data-value-input") ?? ((el as HTMLInputElement).name || null);
-    const existing = el.id ? fields.find((f) => f.field_id === el.id) : undefined;
+    const existing = fields.find((f) => elementOf.get(f) === el) ?? (el.id ? fields.find((f) => f.field_id === el.id) : undefined);
     if (existing) {
       existing.input_type = "date";
       existing.current_value = picker.currentValue;

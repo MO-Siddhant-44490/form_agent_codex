@@ -2,10 +2,11 @@
 // accessible name among role-compatible controls. Raw CSS/XPath from a model
 // is never accepted (invariant 5) — only TargetDescriptor fields are used.
 import type { TargetDescriptor } from "@form-agent/contracts";
-import { ARIA_PREFIX, widgetName } from "../perception/aria";
+import { ARIA_PREFIX, ariaFieldName, widgetName } from "../perception/aria";
 import { accessibleName } from "../perception/labels";
 import { deepGetById, deepQueryAll } from "../perception/shadow";
 import { isVisible } from "../perception/visibility";
+import { isInputEl, isSelectEl } from "./dom-types";
 
 type Control = HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement;
 
@@ -25,6 +26,19 @@ const ARIA_ROLES = new Set(["radiogroup", "checkbox", "switch", "listbox", "text
  * name, then by the ordinal captured at observation time. */
 function resolveAriaWidget(doc: Document, target: TargetDescriptor): Resolved {
   const role = target.role;
+  const name = target.accessible_name;
+  if (target.field_id.includes(":loose:")) {
+    // Loose radios are grouped by their question block: find it by name only.
+    const radios = deepQueryAll<HTMLElement>(doc, "[role='radio']").filter(
+      (r) =>
+        isVisible(r) &&
+        !r.closest("[role='radiogroup']") &&
+        widgetName((r.closest("[role='group'], [role='listitem'], fieldset, form, body") ?? doc.body) as HTMLElement) === name,
+    );
+    return radios.length > 0
+      ? { kind: "aria-widget", role: "radiogroup", element: radios[0]!, members: radios }
+      : { kind: "not-found", detail: `no radio group named ${name}` };
+  }
   const selector = role === "radiogroup" ? "[role='radiogroup']" : role === "textbox"
     ? "[role='textbox'], [contenteditable='true'], [contenteditable='']" : `[role='${role}']`;
   const candidates = deepQueryAll<HTMLElement>(doc, selector).filter(
@@ -32,23 +46,22 @@ function resolveAriaWidget(doc: Document, target: TargetDescriptor): Resolved {
   );
   let el: HTMLElement | undefined;
   if (!target.field_id.startsWith(ARIA_PREFIX)) el = candidates.find((c) => c.id === target.field_id);
-  if (!el && target.accessible_name) {
-    const named = candidates.filter((c) => widgetName(c) === target.accessible_name);
+  if (!el && name) {
+    const named = candidates.filter((c) => ariaFieldName(c, role) === name);
     if (named.length === 1) el = named[0];
+    else if (named.length > 1) {
+      // Same name twice: the ordinal disambiguates, but only among those.
+      const ordinal = Number(target.field_id.split(":").pop());
+      const byOrdinal = Number.isInteger(ordinal) ? candidates[ordinal] : undefined;
+      el = byOrdinal && named.includes(byOrdinal) ? byOrdinal : undefined;
+      if (!el) return { kind: "not-found", detail: `ambiguous ${role} named ${name}` };
+    }
   }
-  if (!el) {
+  if (!el && !name) {
     const ordinal = Number(target.field_id.split(":").pop());
     if (Number.isInteger(ordinal)) el = candidates[ordinal];
   }
-  if (!el && target.field_id.includes(":loose:")) {
-    // Loose radios grouped by their question block: find the block by name.
-    const radios = deepQueryAll<HTMLElement>(doc, "[role='radio']").filter(
-      (r) => isVisible(r) && !r.closest("[role='radiogroup']") && widgetName(
-        (r.closest("[role='group'], [role='listitem'], fieldset, form, body") ?? doc.body) as HTMLElement,
-      ) === target.accessible_name,
-    );
-    if (radios.length > 0) return { kind: "aria-widget", role: "radiogroup", element: radios[0]!, members: radios };
-  }
+  // Fail closed rather than act on a different widget than the one planned.
   if (!el) return { kind: "not-found", detail: `no ${role} widget for ${target.field_id}` };
   const members =
     role === "radiogroup"
@@ -114,7 +127,7 @@ export function resolveTarget(doc: Document, target: TargetDescriptor): Resolved
     ).filter((el) => {
       if (!isVisible(el)) return false;
       const name =
-        el instanceof HTMLInputElement
+        isInputEl(el)
           ? el.value || accessibleName(el)
           : accessibleName(el) || el.textContent?.trim();
       return name === target.accessible_name;
@@ -126,7 +139,7 @@ export function resolveTarget(doc: Document, target: TargetDescriptor): Resolved
 }
 
 function inputTypeOf(el: Control): string {
-  return el instanceof HTMLInputElement || el instanceof HTMLSelectElement
+  return isInputEl(el) || isSelectEl(el)
     ? el.type
     : "textarea";
 }

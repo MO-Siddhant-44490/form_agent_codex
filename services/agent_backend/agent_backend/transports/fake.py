@@ -228,6 +228,9 @@ class FakeTransport:
             pattern=f.pattern,
         )
 
+    def sequence_floor(self) -> int:
+        return self.last_action_seq
+
     def observe(self) -> PageObservation:
         self.observation_seq += 1
         active = self._active_fields()

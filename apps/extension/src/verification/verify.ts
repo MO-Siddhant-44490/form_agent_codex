@@ -59,11 +59,13 @@ function classifyValueFailure(
 function findField(obs: PageObservation, action: BrowserAction): FormField | undefined {
   const target = action.target;
   if (!target) return undefined;
-  return (obs.fields ?? []).find(
-    (f) =>
-      f.field_id === target.field_id ||
-      (target.name_attr !== null && f.target.name_attr === target.name_attr),
-  );
+  const fields = obs.fields ?? [];
+  const exact = fields.find((f) => f.field_id === target.field_id);
+  if (exact) return exact;
+  // Fall back to the name only when it identifies ONE field (a checkbox list
+  // shares a name: verifying box #3 must not read box #1).
+  const byName = target.name_attr === null ? [] : fields.filter((f) => f.target.name_attr === target.name_attr);
+  return byName.length === 1 ? byName[0] : undefined;
 }
 
 function verdict(

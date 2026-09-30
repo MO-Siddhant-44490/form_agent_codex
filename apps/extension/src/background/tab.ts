@@ -69,8 +69,10 @@ export async function attachToTab(tabId: number, url: string): Promise<SessionSt
 const NO_RECEIVER = /Receiving end does not exist|Could not establish connection/i;
 
 /** Wait (bounded) for a tab that is mid-navigation to finish loading, so the
- * next message reaches the NEW document rather than racing its unload. */
-async function waitForTabLoaded(tabId: number, timeoutMs = 10000): Promise<void> {
+ * next message reaches the NEW document rather than racing its unload. Short:
+ * a slow ad/captcha subframe can keep a tab "loading" long after the form is
+ * usable, and the content script answers once the document exists anyway. */
+async function waitForTabLoaded(tabId: number, timeoutMs = 4000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const tab = await chrome.tabs.get(tabId);
@@ -79,15 +81,41 @@ async function waitForTabLoaded(tabId: number, timeoutMs = 10000): Promise<void>
   }
 }
 
+/** The tab is still on the session's origin (a redirect may have moved it). */
+async function stillOnOrigin(tabId: number): Promise<boolean> {
+  const tab = await chrome.tabs.get(tabId);
+  return !!tab.url && new URL(tab.url).origin === state.origin;
+}
+
+// A page that never answers — typically a native alert()/confirm() blocking
+// it — must fail fast with a clear reason, not hang until the backend times out.
+const CONTENT_TIMEOUT_MS = 20000;
+
+function withTimeout<T>(p: Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(
+      () => reject(new Error("the page is not responding — a browser dialog (alert/confirm) may be open; please close it")),
+      CONTENT_TIMEOUT_MS,
+    );
+    p.then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (e) => { clearTimeout(t); reject(e); },
+    );
+  });
+}
+
 async function sendToContent<T>(tabId: number, message: unknown): Promise<T> {
   await waitForTabLoaded(tabId);
+  if (!(await stillOnOrigin(tabId))) throw new Error("the tab left the form's site; re-attach required");
   try {
-    return (await chrome.tabs.sendMessage(tabId, message)) as T;
+    return (await withTimeout(chrome.tabs.sendMessage(tabId, message))) as T;
   } catch (error) {
     if (!(error instanceof Error) || !NO_RECEIVER.test(error.message)) throw error;
     await waitForTabLoaded(tabId);
+    // Never inject into a page from another origin (invariant 8).
+    if (!(await stillOnOrigin(tabId))) throw new Error("the tab left the form's site; re-attach required");
     await chrome.scripting.executeScript({ target: { tabId }, files: ["content.js"] });
-    return (await chrome.tabs.sendMessage(tabId, message)) as T;
+    return (await withTimeout(chrome.tabs.sendMessage(tabId, message))) as T;
   }
 }
 
@@ -154,6 +182,12 @@ export async function observe(): Promise<SessionState> {
   }
   // Contract validation at the trust boundary.
   const parsed: PageObservation = PageObservationSchema.parse(response.observation);
+  if (parsed.origin !== state.origin) {
+    // Redirected mid-flow (SSO, payment): never hand another site's page on.
+    state.attached = false;
+    state.error = `origin changed (${state.origin} -> ${parsed.origin}); re-attach required`;
+    return state;
+  }
   state.lastObservation = parsed;
   state.error = null;
   return state;
@@ -208,7 +242,11 @@ export async function execute(rawAction: unknown): Promise<ExecuteOutcome> {
     };
   }
 
-  // 3. Execute in the page.
+  // 3. Execute in the page — only against a known page: the content script's
+  // stale-page check needs the fingerprint of the observation it was planned on.
+  if (!state.lastObservation) {
+    return { result: rejected(action, "stale_observation", "observe the page first"), verification: null, state };
+  }
   const request: ExecuteRequest = {
     type: "FA_EXECUTE",
     action,

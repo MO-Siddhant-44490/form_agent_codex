@@ -48,7 +48,11 @@ class WebSocketBrowserTransport:
             raise PageUnavailable(reply.get("error") or "observation unavailable")
         return PageObservation.model_validate(reply["observation"])
 
+    def sequence_floor(self) -> int:
+        return self._session.action_seq
+
     def execute(self, action: BrowserAction) -> ExecuteOutcome:
+        self._session.action_seq = max(self._session.action_seq, action.sequence_number)
         reply = self._call(
             MessageType.BROWSER_ACTION,
             {"command": "execute", "action": action.model_dump(mode="json")},

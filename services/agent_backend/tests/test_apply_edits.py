@@ -57,3 +57,24 @@ def test_apply_edits_skips_a_field_already_at_the_target_value():
 
     assert edit.filled_fields == ["city"]  # reported satisfied
     assert transport.execution_counts == {}  # nothing dispatched — already correct
+
+
+def test_back_to_back_driver_calls_continue_the_sequence():
+    """A fill, then auto-repair, then continue-after-answer all run on ONE
+    connection: the second call must not restart numbering (the extension's
+    replay guard would reject every action as stale)."""
+    from agent_backend.driver import run_fill
+
+    name = FakeField("full-name", "text", "full_name", "Full name", required=True)
+    city = FakeField("city", "text", "city", "City", required=True)
+    transport = FakeTransport(fields=[name, city])
+    run_fill(transport, [_fact("full_name", "Ada Lovelace"), _fact("city", "London")])
+    first_high = transport.last_action_seq
+    assert first_high >= 2
+
+    edit = apply_edits(
+        transport, [_fact("full_name", "Ada Lovelace"), _fact("city", "Paris")], {"city"}
+    )
+    assert edit.filled_fields == ["city"] and edit.failed_fields == []
+    assert city.value == "Paris"
+    assert transport.last_action_seq > first_high  # continued, not restarted

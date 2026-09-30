@@ -142,12 +142,14 @@ def check_action(
 def _find_field(observation: PageObservation, action: BrowserAction) -> FormField | None:
     if action.target is None:
         return None
-    for field in observation.fields:
-        if field.field_id == action.target.field_id:
-            return field
-        if (
-            action.target.name_attr is not None
-            and field.target.name_attr == action.target.name_attr
-        ):
-            return field
-    return None
+    exact = next((f for f in observation.fields if f.field_id == action.target.field_id), None)
+    if exact is not None:
+        return exact
+    # Name fallback only when it identifies ONE field: otherwise the checks
+    # (visibility, credential, captcha) could run against the wrong control.
+    named = [
+        f
+        for f in observation.fields
+        if action.target.name_attr is not None and f.target.name_attr == action.target.name_attr
+    ]
+    return named[0] if len(named) == 1 else None

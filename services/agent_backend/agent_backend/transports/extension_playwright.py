@@ -39,6 +39,7 @@ class ExtensionPlaywrightTransport:
         self._context: Any = None
         self._worker: Any = None
         self._session: TabSession | None = None
+        self._seq = 0  # highest action sequence sent (the extension keeps its guard)
 
     def attach(self) -> TabSession:
         """Launch the browser with the extension and bind to the fixture tab.
@@ -100,7 +101,11 @@ class ExtensionPlaywrightTransport:
             raise PageUnavailable(f"observe failed: {state['error']}")
         return PageObservation.model_validate(state["lastObservation"])
 
+    def sequence_floor(self) -> int:
+        return self._seq
+
     def execute(self, action: BrowserAction) -> ExecuteOutcome:
+        self._seq = max(self._seq, action.sequence_number)
         outcome = self._worker.evaluate(
             "(a) => globalThis.__formAgentTest.execute(a)",
             action.model_dump(mode="json"),

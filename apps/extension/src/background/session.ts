@@ -224,11 +224,23 @@ function connectWs(
     const session: ChatSession = { ws, runId, token, backendUrl, facts, busy: false };
     chat = session;
     ws.onopen = () => {
+      // A new backend connection numbers its actions from 1 for the whole
+      // session (across fill, repair, and continue); reset the replay guard
+      // here — once per connection, never mid-session.
+      resetActionSequence();
       ws.send(JSON.stringify({ type: "hello", origin: state.origin, tab_id: state.tabId }));
       done(session);
     };
     ws.onmessage = makeOnMessage(runId);
     ws.onclose = () => {
+      // Mid-operation drop (backend restarted, worker recycled): tell the panel
+      // so its progress card and Fill button don't wait forever.
+      if (chat?.ws === ws && chat.busy) {
+        toPanel({
+          type: "FA_FILL_DONE",
+          result: { type: "fill_error", error: "the connection to the local backend was lost — click Fill to resume" },
+        });
+      }
       if (chat?.ws === ws) chat = null;
       done(null);
     };
@@ -318,7 +330,6 @@ async function sessionForDocument(backendUrl: string): Promise<ChatSession | nul
 /** Send a backend operation on the live session (a fill or a chat turn). */
 function sendOperation(session: ChatSession, envelope: Record<string, unknown>): void {
   session.busy = true;
-  resetActionSequence(); // each backend fill/edit numbers its actions from 1
   session.ws.send(JSON.stringify(envelope));
   toPanel({ type: "FA_FILL_STARTED" });
 }

@@ -159,6 +159,7 @@ def build_action_for(
     value_ref: str,
     attempt: int = 0,
     method_hint: "ActionMethodHint | None" = None,
+    key_scope: str = "",
 ) -> BrowserAction:
     """Build the typed action applying an approved assignment to a field.
     Used by the mapping-driven driver; plan_next_action above remains the
@@ -187,6 +188,7 @@ def build_action_for(
         risk=RiskLevel.LOW,
         idempotency_key=(
             f"{run_id}:{field.field_id}:{checked if value is None else value}{suffix}"
+            + (f":{key_scope}" if key_scope else "")
         ),
         source_observation_seq=source_observation_seq,
         method_hint=method_hint,

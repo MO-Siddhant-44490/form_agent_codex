@@ -3,6 +3,7 @@
 // honeypots must never be filled (threat T2).
 
 import { composedParent } from "./shadow";
+import { isInputEl } from "../actions/dom-types";
 
 const OFFSCREEN_PX = -999;
 
@@ -23,7 +24,7 @@ export function hasLayout(doc: Document): boolean {
 
 export function isVisible(el: HTMLElement): boolean {
   if (el.hidden) return false;
-  if (el instanceof HTMLInputElement && el.type === "hidden") return false;
+  if (isInputEl(el) && el.type === "hidden") return false;
   if (el.closest('[aria-hidden="true"]') !== null) return false;
 
   const win = el.ownerDocument.defaultView;
@@ -34,7 +35,7 @@ export function isVisible(el: HTMLElement): boolean {
   // style-based hiding and offscreen honeypots.
   for (
     let node: HTMLElement | null = el;
-    node && node !== el.ownerDocument.body && node.ownerDocument.body?.contains(node) !== false;
+    node && node !== el.ownerDocument.body && node.isConnected;
     node = composedParent(node)
   ) {
     const style = win.getComputedStyle(node);

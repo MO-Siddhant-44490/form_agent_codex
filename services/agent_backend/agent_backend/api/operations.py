@@ -5,6 +5,7 @@ back to the panel. Never submits a form."""
 
 import asyncio
 import base64
+import re
 import threading
 from collections.abc import Callable
 
@@ -16,7 +17,6 @@ from ..chat_agent import (
 )
 from ..document_intelligence.extract import extract_facts
 from ..document_intelligence.parser_factory import build_parser_from_env
-from ..document_intelligence.store import DocumentRejected
 from ..document_intelligence.vlm_extract import supports_vlm, vlm_extract
 from ..driver import EditResult, apply_edits, run_fill
 from ..model_gateway.base import ModelUnavailable
@@ -32,14 +32,28 @@ def _run_in_worker(st, session, loop, send, work: Callable, *, event: str) -> No
     to the panel. A raised exception becomes an error envelope so a failure never
     strands the panel."""
 
+    # One operation at a time per session: two workers on one tab would
+    # interleave observe/execute and race on sequence numbers.
+    if not session.op_lock.acquire(blocking=False):
+        asyncio.run_coroutine_threadsafe(
+            send(
+                {
+                    "type": f"{event}_error",
+                    "error": "Still working on this form — wait for the current step.",
+                }
+            ),
+            loop,
+        )
+        return
+
     def worker():
         transport = WebSocketBrowserTransport(session, loop)
         try:
             payload = work(transport)
-        except DocumentRejected as error:
-            payload = {"type": f"{event}_error", "error": str(error)}
         except Exception as error:  # noqa: BLE001 — surface, don't crash the socket
-            payload = {"type": f"{event}_error", "error": str(error)}
+            payload = {"type": f"{event}_error", "error": _safe_error(error)}
+        finally:
+            session.op_lock.release()
         st.repo.append_event(
             session.run_id,
             f"{event}_completed",
@@ -48,6 +62,17 @@ def _run_in_worker(st, session, loop, send, work: Callable, *, event: str) -> No
         asyncio.run_coroutine_threadsafe(send(payload), loop)
 
     threading.Thread(target=worker, daemon=True).start()
+
+
+_VALUE_LEAK = re.compile(r"input_value=.*?(?=,\s*input_type=|\]|$)", re.S)
+
+
+def _safe_error(error: Exception) -> str:
+    """An error message fit for the panel and the run log: never field values.
+    (A pydantic ValidationError, for one, embeds the offending input.)"""
+    text = _VALUE_LEAK.sub("input_value=<redacted>", str(error))
+    first = text.strip().splitlines()[0] if text.strip() else type(error).__name__
+    return first[:300]
 
 
 def _gateway(st):

@@ -7,6 +7,7 @@ and credential targets are discarded (invariants 2, 5)."""
 import hashlib
 import json
 import threading
+import time
 from collections import OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
@@ -67,6 +68,8 @@ MIN_MODEL_CONFIDENCE = 0.6
 
 # Parallel mapping calls per map() (batches are independent).
 MODEL_PARALLELISM = 4
+# After a model outage, skip model calls for this long (seconds).
+MODEL_DOWN_BACKOFF_S = 60.0
 # Cached per-field model answers kept per mapper (bounded LRU).
 ANSWER_CACHE_SIZE = 5000
 
@@ -92,7 +95,13 @@ class MappingSource(StrEnum):
 
 # Bindings whose field identity came from untrusted page content: not trusted to
 # route a SENSITIVE value without human confirmation (indirect-injection guard).
-_LOW_TRUST_SOURCES = frozenset({MappingSource.MODEL, MappingSource.MEMORY})
+# DERIVATION is model-computed too: a sensitive value it produces needs the
+# user's confirmation exactly like a model mapping would.
+_LOW_TRUST_SOURCES = frozenset(
+    {MappingSource.MODEL, MappingSource.MEMORY, MappingSource.DERIVATION}
+)
+MIN_DERIVED_CONFIDENCE = 0.7
+_SENSITIVITY_RANK = {Sensitivity.PUBLIC: 0, Sensitivity.PERSONAL: 1, Sensitivity.SENSITIVE: 2}
 
 
 @dataclass(frozen=True)
@@ -122,6 +131,16 @@ class Mapper(Protocol):
     def map(
         self, observation: PageObservation, facts_by_key: dict[str, DocumentFact]
     ) -> MappingOutcome: ...
+
+
+def _inherit_sensitivity(derived: DocumentFact, by_id: dict[str, DocumentFact]) -> DocumentFact:
+    """A value computed from a sensitive fact is itself sensitive."""
+    ids = derived.derivation.source_fact_ids if derived.derivation else []
+    ranks = [_SENSITIVITY_RANK.get(by_id[i].sensitivity, 1) for i in ids if i in by_id]
+    if ranks and max(ranks) > _SENSITIVITY_RANK.get(derived.sensitivity, 1):
+        strictest = next(k for k, v in _SENSITIVITY_RANK.items() if v == max(ranks))
+        return derived.model_copy(update={"sensitivity": strictest})
+    return derived
 
 
 def _mappable(field: FormField) -> bool:
@@ -312,13 +331,22 @@ class ModelAssistedMapper:
         # "No match" answers are cached too, so unmatched fields are asked once.
         self._answers: OrderedDict[str, FieldMapping | None] = OrderedDict()
         self._answers_lock = threading.Lock()
+        # After an outage, don't spend minutes re-trying on every re-map: skip
+        # the model for a short while and report it (abstention stands).
+        self._down_until = 0.0
+        self._down_reason = ""
 
     @staticmethod
     def _answer_key(field: FormField, facts_fp: str) -> str:
-        options = hashlib.sha256(
-            json.dumps(field.options or [], separators=(",", ":")).encode()
+        # field_id and the section it sits in are part of the identity: two
+        # "Name" boxes (applicant vs emergency contact) never share an answer.
+        ident = hashlib.sha256(
+            json.dumps(
+                [field.options or [], field.field_id, field.nearby_text or ""],
+                separators=(",", ":"),
+            ).encode()
         ).hexdigest()[:12]
-        return f"{field_signature(field)}:{options}:{facts_fp}"
+        return f"{field_signature(field)}:{ident}:{facts_fp}"
 
     def _cached(self, key: str) -> tuple[bool, "FieldMapping | None"]:
         with self._answers_lock:
@@ -494,6 +522,9 @@ class ModelAssistedMapper:
             elif answer is not None:
                 mappings.append(answer.model_copy(update={"field_id": f.field_id}))
 
+        if to_ask and time.monotonic() < self._down_until:
+            outcome.model_unavailable = self._down_reason
+            to_ask = []
         chunks = [to_ask[i : i + MODEL_BATCH_SIZE] for i in range(0, len(to_ask), MODEL_BATCH_SIZE)]
 
         def ask(chunk: list[FormField]):
@@ -516,6 +547,9 @@ class ModelAssistedMapper:
                 # Deterministic fallback: abstain on this batch — its missing-fact
                 # questions stand (plan.md §11.2) — but say so.
                 outcome.model_unavailable = str(error)
+                if "schema-invalid" not in str(error):  # an outage, not a bad answer
+                    self._down_until = time.monotonic() + MODEL_DOWN_BACKOFF_S
+                    self._down_reason = str(error)
                 continue
             outcome.model_calls.append(result.metadata)
             by_id = {m.field_id: m for m in result.batch.mappings}
@@ -555,7 +589,6 @@ class ModelAssistedMapper:
             else:
                 outcome.questions.append(assigned)
 
-        self._derive_missing(observation, facts_by_key, outcome)
         return outcome
 
     @staticmethod
@@ -589,7 +622,7 @@ class ModelAssistedMapper:
         pending = [
             f
             for f in observation.fields
-            if _mappable(f)
+            if _inferable(f)  # never a consent box: that is the user's say-so
             and f.field_id not in outcome.assignments
             and f.required
             and match_fact(f, facts_by_key) is None
@@ -614,7 +647,11 @@ class ModelAssistedMapper:
 
         result = self._derivation.derive(list(facts_by_key.values()), list(targets.values()))
         outcome.model_calls.extend(result.model_calls)
+        by_id = {f.fact_id: f for f in facts_by_key.values()}
         for derived in result.facts:
+            if derived.confidence < MIN_DERIVED_CONFIDENCE:
+                continue  # an unsure computation is a question, not a value
+            derived = _inherit_sensitivity(derived, by_id)
             for field in fields_for_key.get(derived.key, []):
                 assigned = _assign(field, derived, MappingSource.DERIVATION)
                 if isinstance(assigned, Assignment):

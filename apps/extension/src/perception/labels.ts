@@ -1,5 +1,6 @@
 // Label and accessible-name resolution, in the resilient-targeting order of
 // plan.md §9: explicit label > wrapping label > aria > placeholder > title.
+import { isButtonEl, isHtmlEl, isInputEl, isSelectEl, isTextareaEl } from "../actions/dom-types";
 
 function textOf(el: Element | null): string | null {
   const text = el?.textContent?.trim();
@@ -78,10 +79,10 @@ const INPUT_ROLE: Record<string, string> = {
 export function computedRole(el: HTMLElement): string {
   const explicit = el.getAttribute("role")?.trim();
   if (explicit) return explicit;
-  if (el instanceof HTMLInputElement) return INPUT_ROLE[el.type] ?? "textbox";
-  if (el instanceof HTMLTextAreaElement) return "textbox";
-  if (el instanceof HTMLSelectElement) return el.multiple ? "listbox" : "combobox";
-  if (el instanceof HTMLButtonElement) return "button";
+  if (isInputEl(el)) return INPUT_ROLE[el.type] ?? "textbox";
+  if (isTextareaEl(el)) return "textbox";
+  if (isSelectEl(el)) return el.multiple ? "listbox" : "combobox";
+  if (isButtonEl(el)) return "button";
   return "generic";
 }
 
@@ -92,14 +93,14 @@ export function computedRole(el: HTMLElement): string {
  * one control. Used as a last-resort label for radios and checkboxes. */
 export function adjacentText(el: HTMLElement): string | null {
   const isControl = (n: Node): boolean =>
-    n instanceof HTMLElement && (n.matches("input, select, textarea, button") || n.querySelector("input, select, textarea, button") !== null);
+    isHtmlEl(n) && (n.matches("input, select, textarea, button") || n.querySelector("input, select, textarea, button") !== null);
   const collect = (start: Node | null, next: (n: Node) => Node | null): string => {
     const parts: string[] = [];
     for (let n = start; n; n = next(n)) {
       if (isControl(n)) break;
       const t = n.textContent?.replace(/\s+/g, " ").trim();
       if (t) parts.push(t);
-      if (n instanceof HTMLElement && /^(BR|DIV|P|LI|TR|TD)$/.test(n.tagName)) break;
+      if (isHtmlEl(n) && /^(BR|DIV|P|LI|TR|TD)$/.test(n.tagName)) break;
     }
     return parts.join(" ").trim();
   };

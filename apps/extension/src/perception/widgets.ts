@@ -4,6 +4,7 @@
 // the field looks like a native select to the planner.
 import { deepQueryAll } from "./shadow";
 import { isVisible } from "./visibility";
+import { isInputEl } from "../actions/dom-types";
 
 export type ComboboxInfo = {
   element: HTMLElement;
@@ -85,7 +86,7 @@ export function detectComboboxes(doc: Document): ComboboxInfo[] {
       const root = combo.getRootNode() as Document | ShadowRoot;
       const hidden = root.querySelector<HTMLInputElement>(`input[name="${hiddenName}"]`);
       currentValue = hidden?.value || null;
-    } else if (combo instanceof HTMLInputElement) {
+    } else if (isInputEl(combo)) {
       currentValue = combo.value || null;
     }
     if (currentValue === null && backingSelect && backingSelect.value) {
@@ -151,7 +152,7 @@ export function detectDatePickers(doc: Document): DatePickerInfo[] {
     if (hiddenName) {
       const root = el.getRootNode() as Document | ShadowRoot;
       currentValue = root.querySelector<HTMLInputElement>(`input[name="${hiddenName}"]`)?.value || null;
-    } else if (el instanceof HTMLInputElement) {
+    } else if (isInputEl(el)) {
       currentValue = el.value || null;
     }
     return { element: el, grid: pickerGrid(el), currentValue };

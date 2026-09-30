@@ -317,10 +317,14 @@ def plausible_reshape(original: str, new: str) -> bool:
     if not new or len(new) > len(original) + 6:
         return False
     od, nd = re.sub(r"\D", "", original), re.sub(r"\D", "", new)
-    if nd and nd == od:
-        return True  # same digits, different grouping
-    if nd and len(nd) >= 6 and od.endswith(nd):
-        return True  # national number of the same phone
+    letters_new = re.sub(r"[^a-z]", "", new.lower())
+    letters_old = re.sub(r"[^a-z]", "", original.lower())
+    # Digit shortcuts only when the letters are untouched (a phone, a date):
+    # "ananya88@x" -> "attacker88@y" keeps the digits but is new content.
+    if nd and not letters_new and (nd == od or (len(nd) >= 6 and od.endswith(nd))):
+        return True  # same number, regrouped / national form
+    if nd and nd == od and letters_new == letters_old:
+        return True  # same letters and digits, different separators
     otoks = re.findall(r"[a-z0-9]+", original.lower())
     ntoks = re.findall(r"[a-z0-9]+", new.lower())
     if not ntoks:
@@ -333,7 +337,7 @@ def plausible_reshape(original: str, new: str) -> bool:
         # an abbreviation: a prefix, or the letters of a word in order (St, Rd, Bldg)
         return any(w.startswith(tok) or _subsequence(tok, w) for w in otoks if len(tok) >= 2)
 
-    return sum(derived(t) for t in ntoks) >= 0.8 * len(ntoks)
+    return all(derived(t) for t in ntoks)  # every token must come from the original
 
 
 def _subsequence(short: str, word: str) -> bool:

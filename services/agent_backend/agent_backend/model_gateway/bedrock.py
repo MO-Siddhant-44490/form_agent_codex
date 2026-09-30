@@ -59,6 +59,14 @@ class BedrockModelAdapter:
         return self._config.model_id
 
     def _ensure_client(self) -> Any:
+        try:
+            return self._build_client()
+        except ModelUnavailable:
+            raise
+        except Exception as error:  # ProfileNotFound, no credentials, bad region...
+            raise ModelUnavailable(f"bedrock client unavailable: {error}") from error
+
+    def _build_client(self) -> Any:
         if self._client is None:
             import boto3
             from botocore.config import Config

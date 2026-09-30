@@ -16,6 +16,9 @@ import { elWindow, isFormControl, isInputEl, isSelectEl } from "./dom-types";
 import { fireInputEvents, focusThen, setNativeValue } from "./events";
 import { resolveTarget, type Resolved } from "./resolve";
 import { spotlight } from "./spotlight";
+import { submitsForm } from "../perception/navigation";
+import { purposeOf } from "../perception/fields";
+import { accessibleName } from "../perception/labels";
 
 function result(
   action: BrowserAction,
@@ -42,6 +45,7 @@ function failed(
 }
 
 const TEXTUAL_KINDS = new Set(["SET_TEXT", "SET_NUMBER", "SET_DATE", "SELECT_OPTION"]);
+const NON_NEUTRAL = /\b(ok|okay|yes|agree|accept|confirm|submit|continue|proceed|pay)\b/i;
 // Actions that fill a field (get the on-page spotlight); not clicks/navigation.
 const FILL_KINDS = new Set([...TEXTUAL_KINDS, "SET_CHECKBOX", "SET_RADIO"]);
 
@@ -89,8 +93,26 @@ async function executeTargeted(doc: Document, action: BrowserAction): Promise<Ac
     return executeDatePicker(doc, action);
   }
 
+  if (action.kind === "DISMISS_DIALOG") {
+    const button = resolveDismiss(doc, action);
+    if (!button) return failed(action, "dismiss control not found inside a dialog", "element_not_found");
+    if (submitsForm(button) && NON_NEUTRAL.test(button.textContent ?? "")) {
+      return failed(action, "refused: dismissing would confirm the dialog");
+    }
+    button.click();
+    return result(action, "EXECUTED");
+  }
+
   const resolved = resolveTarget(doc, action.target);
   if (resolved.kind === "not-found") return failed(action, resolved.detail);
+  // Defence in depth (invariant 2): the backend gate already refuses these, but
+  // the page-side executor never types into a password / OTP / captcha either.
+  if (resolved.kind === "element" && isFormControl(resolved.element) && FILL_KINDS.has(action.kind)) {
+    const purpose = purposeOf(resolved.element);
+    if (purpose === "credential" || purpose === "captcha") {
+      return failed(action, `refused: ${purpose} fields are the user's to complete`);
+    }
+  }
   if (FILL_KINDS.has(action.kind)) {
     spotlight(
       resolved.kind === "radio-group"
@@ -130,7 +152,7 @@ async function executeTargeted(doc: Document, action: BrowserAction): Promise<Ac
   }
 
   if (action.kind === "SET_CHECKBOX") {
-    if (resolved.kind !== "element" || !isInputEl(resolved.element)) {
+    if (resolved.kind !== "element" || !isInputEl(resolved.element) || resolved.element.type !== "checkbox") {
       return failed(action, "target is not a checkbox");
     }
     const el = resolved.element;
@@ -145,7 +167,7 @@ async function executeTargeted(doc: Document, action: BrowserAction): Promise<Ac
     const radios =
       resolved.kind === "radio-group"
         ? resolved.radios
-        : isInputEl(resolved.element)
+        : isInputEl(resolved.element) && resolved.element.type === "radio"
           ? [resolved.element]
           : [];
     const match = radios.find((r) => r.value === value);
@@ -156,8 +178,34 @@ async function executeTargeted(doc: Document, action: BrowserAction): Promise<Ac
 
   // CLICK / DISMISS_DIALOG / SUBMIT: a real click on the resolved element.
   if (resolved.kind !== "element") return failed(action, "click needs a single element");
-  (resolved.element as HTMLElement).click();
+  const target = resolved.element as HTMLElement;
+  // Submission lock by EFFECT, not by action name (invariant 1): only an
+  // approved SUBMIT may click a control that submits the form. (The guard in
+  // the background already requires an approval token for SUBMIT.)
+  if (action.kind !== "SUBMIT" && submitsForm(target)) {
+    return failed(action, "refused: this control would submit the form — that is the user's decision");
+  }
+  target.click();
   return result(action, "EXECUTED");
+}
+
+/** DISMISS_DIALOG resolves its button INSIDE an open dialog / banner only —
+ * never a same-named button elsewhere on the page (e.g. the form's own). */
+function resolveDismiss(doc: Document, action: BrowserAction): HTMLElement | null {
+  const name = action.target?.accessible_name ?? null;
+  const containers = deepQueryAll<HTMLElement>(
+    doc,
+    "dialog[open], [role='dialog'], [role='alertdialog'], [id*='cookie' i], [class*='cookie' i], [id*='consent' i], [class*='consent' i]",
+  ).filter(isVisible);
+  for (const box of containers) {
+    const byId = action.target?.field_id ? box.querySelector<HTMLElement>(`[id="${CSS.escape(action.target.field_id)}"]`) : null;
+    if (byId && isVisible(byId)) return byId;
+    const hit = deepQueryAll<HTMLElement>(box, "button, input[type=button], input[type=submit], [role=button], a[href]").find(
+      (b) => isVisible(b) && name !== null && ((isInputEl(b) ? b.value : accessibleName(b) || b.textContent?.trim()) ?? "") === name,
+    );
+    if (hit) return hit;
+  }
+  return null;
 }
 
 function executeUpload(doc: Document, action: BrowserAction): ActionResult {
@@ -197,7 +245,7 @@ function executeDatePicker(doc: Document, action: BrowserAction): ActionResult {
   const pickers = detectDatePickers(doc);
   const picker =
     pickers.find((p) => p.element.id === action.target!.field_id) ??
-    (pickers.length === 1 ? pickers[0] : undefined);
+    undefined; // never fall back to "the only picker": it may be another question
   if (!picker) return failed(action, "date picker not found", "element_not_found");
 
   const el = picker.element;
@@ -335,7 +383,12 @@ async function executeAriaWidget(
     // then click the matching option; re-query in case the site re-renders.
     realClick(element);
     await new Promise((r) => setTimeout(r, 150));
-    const options = [...members, ...deepQueryAll<HTMLElement>(doc, "[role='option']")].filter(
+    // Options of THIS listbox only: its own, plus a popup it controls/owns.
+    const popupIds = `${element.getAttribute("aria-controls") ?? ""} ${element.getAttribute("aria-owns") ?? ""}`
+      .split(/\s+/)
+      .filter(Boolean);
+    const popups = popupIds.map((id) => doc.getElementById(id)).filter((e): e is HTMLElement => e !== null);
+    const options = [...members, ...popups.flatMap((p) => deepQueryAll<HTMLElement>(p, "[role='option']"))].filter(
       (o, i, all) => all.indexOf(o) === i,
     );
     const match = matchMember(options, value);
@@ -370,7 +423,7 @@ async function executeCombobox(doc: Document, action: BrowserAction): Promise<Ac
         c.element.id === fid ||
         c.backingSelect?.id === fid ||
         (nm !== null && c.backingSelect?.name === nm),
-    ) ?? (combos.length === 1 ? combos[0] : undefined);
+    ); // never fall back to "the only combobox": it may be another question
   if (!combo) return failed(action, `combobox not found for ${fid}`, "element_not_found");
 
   const el = combo.element;

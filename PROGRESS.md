@@ -28,7 +28,7 @@ submits a form — the human always reviews first.
 | **Phase 3** — attachment library → auto-upload files into file fields | ⏳ Not started |
 | Broaden Textract fallback recognizer (`extract.py`) | ⏳ Optional (VLM is now primary) |
 
-**Tests:** backend 277 passed (+11 browser integration) · extension 107 passed · contracts no drift.
+**Tests:** backend 286 passed (+11 browser integration) · extension 116 passed · contracts no drift.
 
 ---
 
@@ -213,6 +213,32 @@ Pushed through `a8b518a`; the last six are local.
   questions for already-filled fields were reported. Also: Yes/No questions
   take plain answers ("None" → No), and the VLM extractor keeps every stated
   fact, not only the 20 standard keys.
+- **System review (2026-09-30).** Three parallel code reviews (fill loop, API
+  and transport, extension); every finding verified against the code before
+  fixing. Safety: the submission lock is now enforced by EFFECT (no non-SUBMIT
+  action may click a control that submits the form); dialogs are dismissed
+  only neutrally and only inside the dialog (never "OK" on a confirm modal);
+  iframe password boxes are redacted (realm-safe element checks throughout
+  perception); an observation from another origin after a redirect is refused
+  and content is never injected into one; custom-textbox credentials are never
+  read; the executor itself refuses secret fields; derivation can no longer
+  tick consent boxes, inherits the strictest source sensitivity and needs
+  confidence ≥ 0.7; repair provenance no longer accepts "same digits, new
+  letters"; sensitive values are never sent for repair; the gate checks the
+  exact field, not a same-named neighbour. Correctness: one increasing action
+  sequence per connection (auto-repair and continue-after-answer were being
+  rejected as stale on a live tab); per-call idempotency scope and bounded
+  DUPLICATE handling; per-page state reset; one operation per session at a
+  time; hardened WebSocket loop; a page that stops responding (native alert)
+  fails fast with a clear reason; a lost connection tells the panel; the
+  stability counter no longer resets itself; a wall-clock budget per fill;
+  safe ARIA resolution (fail closed rather than click the wrong widget);
+  unique ids for same-name checkboxes; no "only widget on the page"
+  fallbacks. Performance: no duplicate derivation call, a 60 s model-outage
+  latch, progress details computed only when listened to, cached /health AWS
+  probe, uploads parsed off the event loop. Left for later: persisting the
+  extension's guard state across an MV3 worker restart, and trimming the 3–4
+  redundant observes per operation.
 - **policybazaar term-life quote (2026-09-29).** The live site is behind
   Akamai bot protection (403 for automated browsers), so it was reproduced as
   a fixture (`apps/fixtures/masked-form`). Three generic bugs: (1) a date box

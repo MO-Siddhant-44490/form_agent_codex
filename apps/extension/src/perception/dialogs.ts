@@ -8,16 +8,23 @@ type DialogInfo = NonNullable<PageObservation["dialogs"]>[number];
 import { accessibleName, computedRole } from "./labels";
 import { deepQueryAll } from "./shadow";
 import { isVisible } from "./visibility";
+import { isDialogEl, isInputEl } from "../actions/dom-types";
 
 const COOKIE_RE = /\b(cookie|consent|gdpr|privacy|ccpa|tracking)\b/i;
 
 // Dismiss-button text in priority order: prefer neutral/reject choices over
 // "accept all", so dismissal is the conservative action (never grant more
 // than necessary).
-const DISMISS_PATTERNS: RegExp[] = [
-  /\b(close|dismiss|no thanks|not now|maybe later)\b/i,
-  /\b(got it|ok|okay|understood|continue without)\b/i,
+const NEUTRAL = /\b(close|dismiss|cancel|no thanks|not now|maybe later|skip)\b|^\s*[×✕✖x]\s*$/i;
+// A generic modal is only ever closed with a neutral choice: "OK", "Yes",
+// "Agree" or "Confirm" on a modal may CONFIRM something (a submission, a
+// payment) — that is the user's decision.
+const MODAL_PATTERNS: RegExp[] = [NEUTRAL];
+// A cookie banner: reject first, then acknowledge, accept last.
+const COOKIE_PATTERNS: RegExp[] = [
+  NEUTRAL,
   /\b(reject all|reject|decline|necessary only|essential only|only necessary)\b/i,
+  /\b(got it|ok|okay|understood|continue without)\b/i,
   /\b(accept all|accept|agree|allow all|allow|i agree)\b/i,
 ];
 
@@ -29,12 +36,12 @@ function dialogText(el: HTMLElement): string {
 
 function targetFor(el: Clickable, index: number): TargetDescriptor {
   const name =
-    el instanceof HTMLInputElement ? el.value || accessibleName(el) : accessibleName(el) || el.textContent?.trim() || null;
+    isInputEl(el) ? el.value || accessibleName(el) : accessibleName(el) || el.textContent?.trim() || null;
   return {
     field_id: el.id || `dialog-dismiss-${index}`,
     role: computedRole(el),
     accessible_name: name,
-    input_type: el instanceof HTMLInputElement ? el.type : null,
+    input_type: isInputEl(el) ? el.type : null,
     label: name,
     name_attr: (el as HTMLInputElement).name || null,
     autocomplete: null,
@@ -45,14 +52,14 @@ function targetFor(el: Clickable, index: number): TargetDescriptor {
 
 /** The safest dismiss control inside a dialog, or null. Searches only within
  * the dialog element (never the page/form). */
-function findDismiss(dialog: HTMLElement, index: number): TargetDescriptor | null {
+function findDismiss(dialog: HTMLElement, index: number, cookie: boolean): TargetDescriptor | null {
   const buttons = deepQueryAll<Clickable>(
     dialog,
     'button, input[type="button"], input[type="submit"], [role="button"], a[href]',
   ).filter(isVisible);
-  for (const pattern of DISMISS_PATTERNS) {
+  for (const pattern of cookie ? COOKIE_PATTERNS : MODAL_PATTERNS) {
     const match = buttons.find((b) => {
-      const text = b instanceof HTMLInputElement ? b.value : b.textContent ?? "";
+      const text = (isInputEl(b) ? b.value : b.textContent ?? "").trim();
       return pattern.test(text) || pattern.test(accessibleName(b) ?? "");
     });
     if (match) return targetFor(match, index);
@@ -76,7 +83,7 @@ export function detectDialogs(doc: Document): DialogInfo[] {
     if (seen.has(el)) return;
     // Skip a candidate nested inside one we already recorded.
     if (candidates.some((other) => other !== el && seen.has(other) && other.contains(el))) return;
-    if (el instanceof HTMLDialogElement && !el.open) return;
+    if (isDialogEl(el) && !el.open) return;
     if (!isVisible(el)) return;
     seen.add(el);
 
@@ -92,7 +99,7 @@ export function detectDialogs(doc: Document): DialogInfo[] {
       dialog_id: el.id || `dialog-${i}`,
       kind,
       text_snippet: el.textContent?.trim().slice(0, 200) || null,
-      dismiss_target: findDismiss(el, i),
+      dismiss_target: findDismiss(el, i, kind === "cookie_banner"),
       contains_form: containsForm,
     });
   });

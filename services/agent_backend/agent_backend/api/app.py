@@ -4,6 +4,7 @@ can request live in `operations.py`; orchestration, mapping, and policy live in
 their own modules."""
 
 import asyncio
+import time
 from dataclasses import dataclass, field
 
 from fastapi import Depends, FastAPI, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
@@ -62,13 +63,20 @@ def create_app(state: AppState | None = None) -> FastAPI:
     def get_state() -> AppState:
         return app.state.app_state
 
+    health_cache: dict = {"at": -1e9, "problem": None}
+
     @app.get("/health")
     def health(st: AppState = Depends(get_state)) -> dict:
         """Readiness for the panel: which model provider is wired and whether
-        its credentials work right now, so a fill is never attempted blind."""
+        its credentials work, so a fill is never attempted blind. The AWS probe
+        is cached for a minute (the panel asks before every fill)."""
         gateway = getattr(st.mapper, "_gateway", None)
         check = getattr(gateway, "check_credentials", None)
-        problem = check() if callable(check) else None
+        now = time.monotonic()
+        if now - health_cache["at"] > 60:
+            health_cache["problem"] = check() if callable(check) else None
+            health_cache["at"] = now
+        problem = health_cache["problem"]
         return {
             "status": "ok",
             "provider": type(st.mapper).__name__,
@@ -111,14 +119,14 @@ def create_app(state: AppState | None = None) -> FastAPI:
         }
 
     @app.post("/runs/{run_id}/documents")
-    async def upload_document(
+    def upload_document(  # sync: FastAPI runs it in a thread (parsing blocks)
         run_id: str, file: UploadFile, st: AppState = Depends(get_state)
     ) -> dict:
         """Audit-oriented REST upload (values redacted). The panel's interactive
         flow uses the WebSocket `parse_document` operation instead."""
         if st.repo.get_run(run_id) is None:
             raise HTTPException(404, "run not found")
-        data = await file.read()
+        data = file.file.read()
         pipeline = DocumentPipeline(
             store=st.documents, parser=build_parser_from_env(), facts=st.facts
         )
@@ -157,9 +165,18 @@ def create_app(state: AppState | None = None) -> FastAPI:
             return
         await websocket.accept()
 
-        hello = await websocket.receive_json()
-        if hello.get("type") != "hello":
+        try:
+            hello = await websocket.receive_json()
+        except (ValueError, TypeError):
             await websocket.close(code=4400)
+            return
+        if (
+            not isinstance(hello, dict)
+            or hello.get("type") != "hello"
+            or not isinstance(hello.get("origin"), str)
+            or not isinstance(hello.get("tab_id"), int)
+        ):
+            await websocket.close(code=4400)  # malformed hello
             return
 
         async def send(envelope: dict) -> None:
@@ -210,19 +227,26 @@ def create_app(state: AppState | None = None) -> FastAPI:
         }
         try:
             while True:
-                raw = await websocket.receive_json()
+                try:
+                    raw = await websocket.receive_json()
+                except (ValueError, TypeError):
+                    continue  # not JSON: ignore, never crash the session
+                if not isinstance(raw, dict):
+                    continue
                 op = panel_ops.get(raw.get("type"))
                 if op is not None:
                     op(raw)
                     continue
                 try:
                     session.deliver(raw)
-                except ProtocolError as error:
-                    await websocket.close(code=4400, reason=str(error))
+                except (ProtocolError, ValueError, TypeError) as error:  # incl. ValidationError
+                    await websocket.close(code=4400, reason=str(error)[:120])
                     break
         except WebSocketDisconnect:
-            session.fail_pending(ConnectionError("extension disconnected"))
+            pass
         finally:
+            # Whatever ended the loop, no worker may keep waiting on a reply.
+            session.fail_pending(ConnectionError("extension disconnected"))
             # Session may reconnect; keep durable state, drop the live handle.
             if st.sessions.get(run_id) is session:
                 del st.sessions[run_id]
