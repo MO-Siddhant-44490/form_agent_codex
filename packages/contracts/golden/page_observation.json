@@ -30,7 +30,8 @@
       "disabled": false,
       "readonly": false,
       "visible": true,
-      "value_redacted": false
+      "value_redacted": false,
+      "purpose": "standard"
     }
   ],
   "dialogs": [],
@@ -38,5 +39,6 @@
   "navigation": [],
   "login_detected": false,
   "captcha_detected": false,
-  "dom_stable": true
+  "dom_stable": true,
+  "unrecognized_controls": []
 }
