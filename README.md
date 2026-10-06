@@ -185,6 +185,30 @@ the **reload ↻** icon on the Form Agent card.
 Things that are always left to you: passwords, OTPs, captchas, consent boxes
 (you get **Tick it / Leave it**), and the final Submit.
 
+### Sample documents
+
+`data/` has synthetic profile PDFs you can upload to try it straight away. See
+`data/README.md` for which one suits which form. Everything in them is
+fictitious.
+
+### Websites we tested on
+
+These are the live forms the agent was developed and checked against. Treat
+them as test beds: fill, look, and **do not submit**. Course dates and links
+change over time.
+
+| Website | Form | Result | Profile to upload |
+|---|---|---|---|
+| [CPGRAMS — pgportal.gov.in](https://pgportal.gov.in/Registration) | Public grievance portal registration | All 11 fields filled, including the State → District cascade; the mobile number is reformatted to the site's 10-digit rule. Only the captcha is left to you. | `applicant-profile-ananya-iyer.pdf` |
+| [Vipassana course application — schedule.vridhamma.org](https://schedule.vridhamma.org/form/application-form?centre=24&course=67525) | 3-page application wizard | 27 fields filled across the pages, in page order. Left to you: ID number, two personal free-text answers, the privacy consent. | `vipassana-profile-ananya-iyer.pdf` |
+| [PM Internship Scheme — pminternship.mca.gov.in](https://pminternship.mca.gov.in/login/) | Youth registration (Login / Register → New user? Register now) | Mobile number filled inside the registration pop-up; the "unique number" confirmation is left to you. The Aadhaar e-KYC step sits behind an OTP; its handling (masked Aadhaar box, consent tick, captcha) is covered by automated tests. | `applicant-profile-ananya-iyer.pdf` |
+| [Google Form (sample)](https://docs.google.com/forms/d/e/1FAIpQLSf3v6aQgY8iQ4Oa5gGckRbP7j25HrG5MdOgrBi-44iaAQY59Q/viewform) | Questions built from Google's custom widgets | Choice questions, dropdowns and checkboxes are recognised by their accessibility roles and filled top to bottom. The form may require a Google sign-in. | `applicant-profile-ananya-iyer.pdf` |
+| [Term life quote — policybazaar.com](https://termlife.policybazaar.com/steppq?utm_content=new_cj) | Multi-step quote (name, date of birth, gender, mobile) | Date typed through the site's DD-MM-YYYY input mask, its reformatting of the name accepted, steps continued after you answer. The site blocks automated test browsers, so this was tested in normal Chrome, and the behaviour is pinned by a local replica in the tests. | `applicant-profile-ananya-iyer.pdf` |
+
+The automated tests also run against local replicas of these patterns in
+`apps/fixtures/`: multi-page wizards, ARIA widgets, masked inputs, dialogs,
+shadow DOM, iframes and file uploads.
+
 ---
 
 ## 7. Run the tests (optional)
