@@ -28,7 +28,7 @@ submits a form — the human always reviews first.
 | **Phase 3** — attachment library → auto-upload files into file fields | ⏳ Not started |
 | Broaden Textract fallback recognizer (`extract.py`) | ⏳ Optional (VLM is now primary) |
 
-**Tests:** backend 286 passed (+11 browser integration) · extension 116 passed · contracts no drift.
+**Tests:** backend + contracts 337 passed (+11 browser integration) · extension 116 passed · contracts no drift.
 
 ---
 
@@ -213,6 +213,14 @@ Pushed through `a8b518a`; the last six are local.
   questions for already-filled fields were reported. Also: Yes/No questions
   take plain answers ("None" → No), and the VLM extractor keeps every stated
   fact, not only the 20 standard keys.
+- **Shareable repo + OpenAI option (2026-10-06).** README with full
+  replication steps; `MODEL_PROVIDER=openai` (`OPENAI_API_KEY`, optional
+  `OPENAI_MODEL`/`OPENAI_BASE_URL`) covering mapping, derivation, chat, document
+  extraction (images + PDFs) and repair; the backend reads `./.env`
+  (`.env.example` committed). An unrelated app's `config/` folder (with a
+  `secret_key`) had been swept into a local commit; removed from the unpushed
+  history before the first push. Company-specific AWS details removed from
+  `AGENTS.md`.
 - **System review (2026-09-30).** Three parallel code reviews (fill loop, API
   and transport, extension); every finding verified against the code before
   fixing. Safety: the submission lock is now enforced by EFFECT (no non-SUBMIT
@@ -322,7 +330,7 @@ Tests: `uv run pytest services/agent_backend/tests/ -q` ·
 `cd apps/extension && npx tsc --noEmit && npx vitest run` ·
 `bash packages/contracts/check_drift.sh`.
 
-Environment notes: managed work Mac behind a corporate TLS proxy (`NODE_EXTRA_CA_CERTS`
+Environment notes: behind a corporate TLS proxy, point `NODE_EXTRA_CA_CERTS`
 for Node downloads; `AWS_CA_BUNDLE` if boto3 hits SSL errors); `pnpm` at `~/.local/bin`.
 
 ---

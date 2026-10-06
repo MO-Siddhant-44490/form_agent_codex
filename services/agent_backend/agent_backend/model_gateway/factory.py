@@ -1,7 +1,16 @@
-"""Model gateway selection from the environment. Bedrock is the default
-provider (plan.md §11 baseline); MODEL_PROVIDER=fake keeps a run offline and
-deterministic. The mapper always degrades to abstention if the model is
-unavailable at call time (ModelAssistedMapper catches ModelUnavailable), so a
+"""Model gateway selection from the environment.
+
+    MODEL_PROVIDER=openai   OpenAI (OPENAI_API_KEY; optional OPENAI_MODEL,
+                            OPENAI_BASE_URL for any OpenAI-compatible API)
+    MODEL_PROVIDER=bedrock  Claude on Amazon Bedrock (AWS credentials)
+    MODEL_PROVIDER=local    a local OpenAI-compatible server (vLLM, Ollama...)
+    MODEL_PROVIDER=fake     offline and deterministic (tests, demos)
+    MODEL_PROVIDER=none     no model at all (deterministic mapper only)
+
+Unset: OpenAI when OPENAI_API_KEY is present, otherwise Bedrock.
+
+The mapper always degrades to abstention if the model is unavailable at call
+time (ModelAssistedMapper catches ModelUnavailable), so a
 missing/expired credential never crashes a run — it just asks the user."""
 
 import os
@@ -16,17 +25,39 @@ from .fake import FakeModelAdapter
 DEFAULT_BEDROCK_MODEL_ID = "apac.anthropic.claude-sonnet-4-20250514-v1:0"
 
 
+def selected_provider() -> str:
+    explicit = os.environ.get("MODEL_PROVIDER", "").strip().lower()
+    if explicit:
+        return explicit
+    return "openai" if os.environ.get("OPENAI_API_KEY") else "bedrock"
+
+
 def build_gateway_from_env() -> ModelGateway:
-    provider = os.environ.get("MODEL_PROVIDER", "bedrock").lower()
+    provider = selected_provider()
     if provider == "fake":
         return FakeModelAdapter()
-    if provider == "local":
-        from .local_openai import LocalOpenAIConfig, OpenAICompatibleLocalAdapter
+    if provider in ("openai", "local"):
+        from .openai_adapter import (
+            DEFAULT_OPENAI_BASE_URL,
+            DEFAULT_OPENAI_MODEL,
+            OpenAIConfig,
+            OpenAIModelAdapter,
+        )
 
-        return OpenAICompatibleLocalAdapter(
-            LocalOpenAIConfig(
-                base_url=os.environ.get("LOCAL_MODEL_URL", "http://localhost:8000/v1"),
+        if provider == "openai":
+            return OpenAIModelAdapter(
+                OpenAIConfig(
+                    api_key=os.environ.get("OPENAI_API_KEY"),
+                    model_id=os.environ.get("OPENAI_MODEL", DEFAULT_OPENAI_MODEL),
+                    base_url=os.environ.get("OPENAI_BASE_URL", DEFAULT_OPENAI_BASE_URL),
+                )
+            )
+        # A local OpenAI-compatible server (vLLM, Ollama, LM Studio): no key needed.
+        return OpenAIModelAdapter(
+            OpenAIConfig(
+                api_key=os.environ.get("LOCAL_MODEL_KEY"),
                 model_id=os.environ.get("LOCAL_MODEL_ID", "local-model"),
+                base_url=os.environ.get("LOCAL_MODEL_URL", "http://localhost:11434/v1"),
             )
         )
     # Default: Bedrock.

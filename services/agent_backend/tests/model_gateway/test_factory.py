@@ -13,6 +13,7 @@ from agent_backend.model_gateway.fake import FakeModelAdapter
 
 def test_bedrock_is_the_default_provider(monkeypatch):
     monkeypatch.delenv("MODEL_PROVIDER", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     gateway = build_gateway_from_env()
     assert isinstance(gateway, BedrockModelAdapter)
     assert gateway.model_id == DEFAULT_BEDROCK_MODEL_ID

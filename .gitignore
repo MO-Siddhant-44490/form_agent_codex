@@ -12,3 +12,7 @@ test-results/
 playwright-report/
 _object_store/
 _agent_state/
+config/
+.env
+.env.*
+!.env.example

@@ -64,15 +64,19 @@ demo, test, or feature easier.
 
 ## Model provider
 
-Bedrock is the default agent model (plan.md §11). Selection is env-driven:
+Selection is env-driven (read from the environment or `./.env`; see
+`.env.example`):
 
-- `MODEL_PROVIDER=bedrock` (default) — needs AWS credentials with
-  `bedrock:InvokeModel`/Converse access. This machine uses SSO profile `dev`
-  (account <account-id>, role <role>, region ap-south-1). Activate:
-  `aws sso login --profile dev`, then `export AWS_PROFILE=dev`.
-- `BEDROCK_MODEL_ID` — the inference-profile id to call. List what the account
-  has: `AWS_PROFILE=dev uv run python -m agent_backend.model_gateway.list_models`.
-- `MODEL_PROVIDER=local` — an OpenAI-compatible endpoint (`LOCAL_MODEL_URL`).
+- `MODEL_PROVIDER=openai` — OpenAI or any OpenAI-compatible API. Needs
+  `OPENAI_API_KEY`; optional `OPENAI_MODEL` (default `gpt-4.1`) and
+  `OPENAI_BASE_URL`. Selected automatically when `OPENAI_API_KEY` is set and
+  `MODEL_PROVIDER` is not.
+- `MODEL_PROVIDER=bedrock` — Claude on Amazon Bedrock. Needs AWS credentials
+  with Converse access (`AWS_PROFILE`, `AWS_REGION`) and `BEDROCK_MODEL_ID`;
+  list what an account can use with
+  `uv run python -m agent_backend.model_gateway.list_models`.
+- `MODEL_PROVIDER=local` — a local OpenAI-compatible server (`LOCAL_MODEL_URL`,
+  `LOCAL_MODEL_ID`).
 - `MODEL_PROVIDER=fake` / `none` — offline deterministic; used by all tests.
 
 A missing/expired credential never crashes a run: the mapper degrades to
