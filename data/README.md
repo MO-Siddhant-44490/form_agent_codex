@@ -6,7 +6,7 @@ test; never submit a real application with them.
 
 | File | Persona | What it is for |
 |---|---|---|
-| `applicant-profile-ananya-iyer.pdf` | Ananya Prakash Iyer | General registration/application forms: name, date of birth, gender, contact, full address down to PIN code, an Aadhaar number, emergency contact. Use it for pgportal, PM Internship, Google Forms and insurance quote forms. |
+| `applicant-profile-ananya-iyer.pdf` | Ananya Prakash Iyer | General registration/application forms: name, date of birth, gender, contact, full address down to PIN code, an Aadhaar number, emergency contact. Use it for pgportal, Google Forms and insurance quote forms. |
 | `vipassana-profile-ananya-iyer.pdf` | Ananya Prakash Iyer | The same persona plus everything a 10-day Vipassana course application asks: languages, education, course background, health answers. |
 | `bank-intake-notes-rohan-deshmukh.pdf` | Rohan V. Deshmukh | A deliberately messy, handwritten-style bank intake sheet (abbreviations, corrections, a spouse's and father's names mixed in). Shows how the document reader picks out the applicant's own details. |
 

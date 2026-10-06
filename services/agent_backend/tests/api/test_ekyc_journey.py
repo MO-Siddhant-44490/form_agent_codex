@@ -1,4 +1,4 @@
-"""The pminternship e-KYC journey over the panel protocol, end to end: a masked
+"""An e-KYC registration journey over the panel protocol, end to end: a masked
 Aadhaar input, a consent checkbox, a text captcha, and a profile whose key for
 the Aadhaar number is the abbreviation "aID".
 

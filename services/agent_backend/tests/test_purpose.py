@@ -1,7 +1,7 @@
 """Field purpose: masked identifiers are fillable data, credentials/captchas
 are the human's, consents need an explicit yes, and an uncertain-but-plausible
 mapping is put to the user as a question instead of leaving the field empty.
-Modelled on the pminternship.mca.gov.in e-KYC step (Aadhaar as a password-type
+Modelled on a government e-KYC registration step (Aadhaar as a password-type
 input, a consent checkbox, a text captcha)."""
 
 from agent_backend.driver import apply_edits, run_fill
@@ -71,7 +71,7 @@ def ekyc_fields() -> list[FakeField]:
             "consent",
             "checkbox",
             "consent",
-            "I consent to the use of my Aadhaar details for PM Internship Scheme.",
+            "I consent to the use of my Aadhaar details for this scheme.",
             required=True,
             checked=False,
         ),

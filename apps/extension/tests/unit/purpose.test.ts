@@ -33,7 +33,7 @@ describe("classifyPurpose", () => {
     expect(
       classifyPurpose({
         inputType: "checkbox",
-        texts: ["I consent to the use of my Aadhaar details for PM Internship Scheme."],
+        texts: ["I consent to the use of my Aadhaar details for this scheme."],
       }),
     ).toBe("consent");
     expect(classifyPurpose({ inputType: "checkbox", texts: ["I agree to the Terms & Conditions"] })).toBe(

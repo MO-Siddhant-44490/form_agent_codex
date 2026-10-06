@@ -23,7 +23,7 @@ submits a form — the human always reviews first.
 | VLM document extraction (layout-agnostic, form-aware) | ✅ Done |
 | Multi-doc merge: dedup, new fields, conflict prompts, new-vs-add | ✅ Done |
 | Close-the-loop: length enforcement + auto-repair of flagged fields | ✅ Done |
-| Field **purpose** perception (credential / captcha / consent / masked ID) + "use it?" mapping questions + `bind` | ✅ Done, verified live on pminternship.mca.gov.in |
+| Field **purpose** perception (credential / captcha / consent / masked ID) + "use it?" mapping questions + `bind` | ✅ Done, verified on an e-KYC registration flow |
 | **Role-based perception** (ARIA radio/checkbox/switch/listbox/textbox widgets) + role-generic execution + "can see but can't operate" report + per-fill trace | ✅ Done, verified in Chromium on a Google-Forms-shaped fixture |
 | **Phase 3** — attachment library → auto-upload files into file fields | ⏳ Not started |
 | Broaden Textract fallback recognizer (`extract.py`) | ⏳ Optional (VLM is now primary) |
@@ -167,7 +167,7 @@ Pushed through `a8b518a`; the last six are local.
 - **False "done"** on a value that matched no option (typo "fmale" → `F`):
   report unresolved values honestly with the field's choices.
 - **Length limits**: models miscount characters → clamp deterministically.
-- **pminternship e-KYC (Aadhaar / consent / captcha)** — five generic causes:
+- **Government e-KYC registration (Aadhaar / consent / captcha)** — five generic causes:
   a masked Aadhaar box (`type=password`) was treated as a login credential, so
   the fill was abandoned and the field marked "complete on the page"; a text
   captcha wasn't recognised; a consent checkbox was asked as free text; "aid
